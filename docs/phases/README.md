@@ -90,18 +90,24 @@ Phase 4 (Project Config) can be merged any time after Phase 1 — it does not ne
 
 ## Local Development Environment
 
-All development, integration testing, and E2E testing runs against a **KIND (Kubernetes IN Docker)** cluster. No cloud account is required.
+All development, integration testing, and E2E testing runs against a fully self-contained **KIND (Kubernetes IN Docker)** cluster. No cloud account, external tunnels, or external GitLab instance is required.
 
 The full local environment is brought up with a single command:
 ```bash
 ./scripts/cluster-up.sh
 ```
 
-This creates the KIND cluster, starts a local Docker registry at `localhost:5001`, installs the nginx ingress controller, builds and pushes both Docker images, and applies all K8s manifests. The gateway is then reachable at `http://localhost:8080`.
+This creates the KIND cluster, starts a local Docker registry at `localhost:5001`, installs the nginx ingress controller, deploys **GitLab CE** inside the cluster, builds and pushes both Docker images, applies all K8s manifests, and seeds GitLab with a test project and webhook. After it completes:
 
-To receive real GitLab webhooks locally, run an ngrok or smee.io tunnel pointing at `localhost:8080` and register the tunnel URL in GitLab.
+- GitLab UI: `http://gitlab.localhost:8080`
+- Gateway: `http://pi-agent.localhost:8080`
+- Test credentials (token, project ID, etc.) written to `.env.test`
 
-Engineers working on phases that don't require a live cluster (e.g. Phase 0 pure Python work, unit tests) can skip this setup entirely. It is only required for integration and E2E tests.
+Because GitLab runs inside the cluster, it delivers webhooks to the gateway via in-cluster DNS — no tunnel needed. The first run takes 5–8 minutes (mostly waiting for GitLab CE to start). Subsequent `scripts/load-images.sh` runs to rebuild and redeploy the gateway/worker take under a minute.
+
+**Resource requirement:** GitLab CE needs at least 8 GB RAM available to Docker. Adjust Docker Desktop memory limits before running `cluster-up.sh`.
+
+Engineers working on phases that don't require a live cluster (Phase 0 pure Python work, unit tests) can skip this setup entirely.
 
 ---
 
