@@ -1,6 +1,51 @@
-## Control Plane Dashboard — `dashboard/index.html`
+## Control Plane Dashboard — `dashboard/`
 
-A single-page React application served directly by the gateway at `/`. It communicates with the gateway's REST and SSE endpoints only — it has no direct access to Kubernetes or GitLab.
+A Vue 3 single-page application built with Vite and served by the gateway at `/`. It communicates with the gateway's REST and SSE endpoints only — it has no direct access to Kubernetes or GitLab.
+
+### Project structure
+
+```
+dashboard/
+├── index.html              # Vite entry point
+├── package.json            # npm dependencies (vue, vite, @vitejs/plugin-vue)
+├── vite.config.js          # Vite config; dev-server proxies /agents, /sessions, /projects to localhost:3000
+└── src/
+    ├── main.js             # Creates and mounts the Vue app
+    ├── App.vue             # Root component — nav bar and view routing
+    ├── styles/
+    │   └── global.css      # CSS variables, resets, and all shared utility classes
+    ├── api/
+    │   └── index.js        # apiFetch() — thin wrapper around fetch()
+    ├── utils/
+    │   └── time.js         # elapsed(), duration(), timeAgo(), copyText()
+    ├── components/
+    │   ├── StatusPill.vue  # Coloured status badge
+    │   ├── GasMeter.vue    # Token-budget progress bars + top-up form
+    │   ├── LogEvent.vue    # Single structured log event (collapsible)
+    │   ├── LogPanel.vue    # Scrolling log event list; streams via SSE for active jobs
+    │   └── AgentCard.vue   # Running-agent card with live log preview
+    └── views/
+        ├── ActiveAgentsView.vue   # Polls /agents and renders AgentCard list
+        ├── HistoryView.vue        # Paginated, searchable history table
+        ├── HistoryRow.vue         # Single history table row
+        ├── SessionLauncher.vue    # New-session configuration form
+        ├── SessionWorkspace.vue   # Split-pane live session workspace
+        └── NewSessionView.vue     # Switches between launcher and workspace
+```
+
+### Building
+
+```bash
+cd dashboard
+npm install
+npm run build      # output goes to dashboard/dist/
+```
+
+`gateway/main.py` mounts `dashboard/dist/assets` at `/assets` and serves `dashboard/dist/index.html` at `/`. The Dockerfile.gateway runs `npm ci && npm run build` in a Node 20 build stage before copying the compiled output into the final Python image.
+
+### Local development
+
+Run `npm run dev` inside `dashboard/` to start the Vite dev server on port 5173. The dev server proxies `/agents`, `/sessions`, `/projects`, and `/internal` to the gateway on port 3000, so the full app works without rebuilding.
 
 ## Active Agents View
 

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from sse_starlette.sse import EventSourceResponse
 
@@ -61,6 +62,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+_dist_assets = os.path.join(os.path.dirname(__file__), "..", "dashboard", "dist", "assets")
+if os.path.isdir(_dist_assets):
+    app.mount("/assets", StaticFiles(directory=_dist_assets), name="static_assets")
 
 
 def _default_agent_config() -> AgentConfig:
@@ -676,5 +681,5 @@ async def list_mrs(project_id: str, request: Request):
 
 @app.get("/")
 async def dashboard():
-    dashboard_path = os.path.join(os.path.dirname(__file__), "..", "dashboard", "index.html")
+    dashboard_path = os.path.join(os.path.dirname(__file__), "..", "dashboard", "dist", "index.html")
     return FileResponse(dashboard_path)
