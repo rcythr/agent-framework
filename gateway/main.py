@@ -56,7 +56,7 @@ def _default_agent_config() -> AgentConfig:
     )
 
 
-def _make_job_record(job_name: str, task_spec: TaskSpec, agent_config: AgentConfig) -> JobRecord:
+def _make_job_record(job_name: str, task_spec: TaskSpec, agent_config: AgentConfig, triggered_by: str = "system") -> JobRecord:
     return JobRecord(
         id=job_name,
         task=task_spec.task,
@@ -65,6 +65,7 @@ def _make_job_record(job_name: str, task_spec: TaskSpec, agent_config: AgentConf
         status="pending",
         context=task_spec.context,
         started_at=datetime.now(timezone.utc),
+        triggered_by=triggered_by,
         gas_limit_input=agent_config.gas_limit_input,
         gas_limit_output=agent_config.gas_limit_output,
     )
@@ -118,12 +119,16 @@ async def webhook_gitlab(request: Request):
 
 
 @app.post("/trigger")
-async def trigger(task_spec: TaskSpec):
+async def trigger(task_spec: TaskSpec, request: Request):
     # Manual trigger: skip allowed_users check (access controlled by dashboard auth layer)
     agent_config = _default_agent_config()
 
+    # Identify the operator via auth_provider — never read X-Forwarded-User directly
+    identity = _auth_provider.extract_user(dict(request.headers))
+    triggered_by = identity.username if identity.username else "system"
+
     job_name = _kube.spawn_agent_job(task_spec, agent_config)
-    await _db.create_job(_make_job_record(job_name, task_spec, agent_config))
+    await _db.create_job(_make_job_record(job_name, task_spec, agent_config, triggered_by=triggered_by))
 
     return {"job_name": job_name}
 

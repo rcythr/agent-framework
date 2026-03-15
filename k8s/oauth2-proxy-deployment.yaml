@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oauth2-proxy
+  namespace: pi-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oauth2-proxy
+  template:
+    metadata:
+      labels:
+        app: oauth2-proxy
+    spec:
+      containers:
+        - name: oauth2-proxy
+          image: quay.io/oauth2-proxy/oauth2-proxy:latest
+          args:
+            - --provider=gitlab
+            - --upstream=http://pi-agent-gateway:80
+            - --http-address=0.0.0.0:4180
+            - --email-domain=*
+            - --pass-user-headers=true
+          env:
+            - name: OAUTH2_PROXY_GITLAB_GROUP
+              valueFrom:
+                configMapKeyRef:
+                  name: gateway-config
+                  key: gitlab-group
+                  optional: true
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-creds
+                  key: cookie-secret
+            - name: OAUTH2_PROXY_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-creds
+                  key: client-id
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-creds
+                  key: client-secret
+          ports:
+            - containerPort: 4180
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oauth2-proxy
+  namespace: pi-agents
+spec:
+  selector:
+    app: oauth2-proxy
+  ports:
+    - port: 80
+      targetPort: 4180

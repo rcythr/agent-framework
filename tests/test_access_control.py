@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from httpx import AsyncClient, ASGITransport
 
 from gateway.main import app
+from providers.auth_base import UserIdentity
 from shared.models import AgentConfig, TaskSpec
 
 
@@ -64,6 +65,7 @@ def mock_app_deps():
     mock_db.create_job = AsyncMock()
 
     mock_auth = MagicMock()
+    mock_auth.extract_user.return_value = UserIdentity(username="", email="", groups=[])
 
     with patch("gateway.main._provider", mock_provider), \
          patch("gateway.main._kube", mock_kube), \
