@@ -24,7 +24,6 @@ phalanx/
 ├── helm/               # Helm chart for production deployment
 ├── kind/               # KIND cluster config for local development
 ├── scripts/            # Shell scripts for local dev (cluster-up, seed, etc.)
-├── harness/            # Multi-phase test harness CLI
 ├── tests/              # Pytest test suite (unit + E2E)
 └── docs/               # Architecture and usage documentation
 ```

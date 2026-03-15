@@ -50,6 +50,22 @@ When it finishes you'll see something like:
   Gateway:  http://phalanx.localhost:8080
 ```
 
+After a successful run a `.env.test` file is written to the repository root:
+
+```
+GITLAB_URL=http://gitlab.localhost:8080
+GITLAB_TOKEN=<project access token>
+GITLAB_WEBHOOK_SECRET=<webhook secret>
+GITLAB_PROJECT_ID=<project numeric id>
+GITLAB_PROJECT_PATH=pi-agent-test/test-repo
+```
+
+This file is gitignored. E2E tests source it automatically. If you need to re-register the test project and webhook without recreating the whole cluster:
+
+```bash
+./scripts/reseed-gitlab.sh
+```
+
 ### 1.2 Open the dashboard
 
 Navigate to `http://phalanx.localhost:8080` in your browser. Because this is a local dev cluster with no OAuth2 proxy, you'll land directly on the dashboard.

@@ -136,10 +136,10 @@ phalanx/
 │       ├── values.yaml
 │       └── templates/
 ├── docs/
-│   ├── ARCHITECTURE.md      # Deep-dive technical architecture
-│   ├── local-development.md
-│   ├── walkthrough.md       # End-to-end usage walkthrough
-│   └── gitlab-oauth-setup.md
+│   ├── ARCHITECTURE.md         # Deep-dive technical architecture
+│   ├── walkthrough.md          # End-to-end usage walkthrough
+│   ├── gitlab-oauth-setup.md
+│   └── providers/              # Per-provider setup guides
 ├── Dockerfile.gateway
 ├── Dockerfile.worker
 └── requirements.txt
