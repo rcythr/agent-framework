@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pi-agent-gateway
+  namespace: pi-agents
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: job-spawner
+  namespace: pi-agents
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pi-agent-gateway-job-spawner
+  namespace: pi-agents
+subjects:
+  - kind: ServiceAccount
+    name: pi-agent-gateway
+    namespace: pi-agents
+roleRef:
+  kind: Role
+  name: job-spawner
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pi-agent-worker
+  namespace: pi-agents
