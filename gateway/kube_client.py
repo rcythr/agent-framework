@@ -5,7 +5,7 @@ import uuid
 from kubernetes import client, config
 from kubernetes.config import ConfigException
 
-from shared.models import AgentConfig, TaskSpec
+from shared.models import AgentConfig, TaskSpec, SessionRecord
 
 
 class KubeClient:
@@ -189,6 +189,78 @@ class KubeClient:
             namespace=self._namespace,
             body=client.V1DeleteOptions(propagation_policy="Foreground"),
         )
+
+    def spawn_session_job(self, session: SessionRecord) -> str:
+        """Spawn a K8s Job for an interactive session worker."""
+        import json as _json
+        job_name = f"pi-session-{session.id}"
+
+        env_vars = [
+            client.V1EnvVar(name="SESSION_ID", value=session.id),
+            client.V1EnvVar(name="GATEWAY_URL", value=self._gateway_url),
+            client.V1EnvVar(name="GITLAB_URL", value=self._gitlab_url),
+            client.V1EnvVar(name="LLM_ENDPOINT", value=self._llm_endpoint),
+            client.V1EnvVar(name="PROJECT_ID", value=str(session.project_id)),
+            client.V1EnvVar(name="PROJECT_PATH", value=session.project_path),
+            client.V1EnvVar(name="BRANCH", value=session.branch),
+            client.V1EnvVar(name="SESSION_GOAL", value=session.context.goal),
+            client.V1EnvVar(name="GAS_LIMIT_INPUT", value=str(session.gas_limit_input)),
+            client.V1EnvVar(name="GAS_LIMIT_OUTPUT", value=str(session.gas_limit_output)),
+            client.V1EnvVar(
+                name="GITLAB_TOKEN",
+                value_from=client.V1EnvVarSource(
+                    secret_key_ref=client.V1SecretKeySelector(
+                        name="gitlab-creds",
+                        key="token",
+                    )
+                ),
+            ),
+            client.V1EnvVar(
+                name="OPENAI_API_KEY",
+                value_from=client.V1EnvVarSource(
+                    secret_key_ref=client.V1SecretKeySelector(
+                        name="llm-creds",
+                        key="api-key",
+                    )
+                ),
+            ),
+        ]
+
+        container = client.V1Container(
+            name="worker",
+            image=self._image,
+            env=env_vars,
+        )
+
+        pod_spec = client.V1PodSpec(
+            containers=[container],
+            restart_policy="Never",
+            service_account_name="pi-agent-worker",
+        )
+
+        pod_template = client.V1PodTemplateSpec(
+            metadata=client.V1ObjectMeta(labels={"app": "pi-agent-worker", "mode": "session"}),
+            spec=pod_spec,
+        )
+
+        job_spec = client.V1JobSpec(
+            template=pod_template,
+            ttl_seconds_after_finished=300,
+        )
+
+        job = client.V1Job(
+            api_version="batch/v1",
+            kind="Job",
+            metadata=client.V1ObjectMeta(
+                name=job_name,
+                namespace=self._namespace,
+                labels={"app": "pi-agent-worker", "mode": "session"},
+            ),
+            spec=job_spec,
+        )
+
+        self._batch.create_namespaced_job(namespace=self._namespace, body=job)
+        return job_name
 
     def get_job_status(self, job_name: str) -> str:
         """Return 'succeeded', 'failed', or 'running' for a K8s Job."""

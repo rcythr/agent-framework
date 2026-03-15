@@ -27,6 +27,7 @@ class Agent:
         event_handler: Callable[[AgentEvent], Awaitable[None]],
         gas_limit_input: int = 80_000,
         gas_limit_output: int = 20_000,
+        interactive: bool = False,
     ):
         self._endpoint = endpoint
         self._api_key = api_key
@@ -36,6 +37,7 @@ class Agent:
         self._event_handler = event_handler
         self._gas_limit_input = gas_limit_input
         self._gas_limit_output = gas_limit_output
+        self._interactive = interactive
 
         self._gas_used_input = 0
         self._gas_used_output = 0
@@ -174,6 +176,17 @@ class Agent:
                 # Agent is idle — inject follow-up messages if any
                 if not self._follow_up_queue.empty():
                     follow_up_msg = self._follow_up_queue.get_nowait()
+                    messages.append({"role": "user", "content": follow_up_msg})
+                    continue
+                if self._interactive:
+                    # In interactive mode: emit input_request and wait for user follow-up
+                    # The event_handler (in session mode) will call follow_up() with the answer
+                    await self._event_handler(AgentEvent(
+                        event_type="input_request",
+                        payload={"question": msg.content or ""},
+                    ))
+                    # Block until follow_up is provided by the event handler
+                    follow_up_msg = await self._follow_up_queue.get()
                     messages.append({"role": "user", "content": follow_up_msg})
                     continue
                 break
