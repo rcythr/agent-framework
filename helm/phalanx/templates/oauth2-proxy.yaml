@@ -27,6 +27,11 @@ spec:
             - --http-address=0.0.0.0:4180
             - --email-domain=*
             - --pass-user-headers=true
+            # Forward the user's OAuth access token to the gateway as
+            # X-Forwarded-Access-Token.  The gateway uses it for user-scoped
+            # provider API calls (project search, webhook registration).
+            # Requires the GitLab OAuth application to have the `api` scope.
+            - --pass-access-token=true
           env:
             - name: OAUTH2_PROXY_GITLAB_GROUP
               valueFrom:

@@ -9,7 +9,12 @@ This document describes the manual steps required to configure a GitLab OAuth2 a
 2. Fill in the application details:
    - **Name:** `pi-agent-gateway`
    - **Redirect URI:** `https://<your-domain>/oauth2/callback`
-   - **Scopes:** `read_user`, `openid`
+   - **Scopes:** `api`, `read_user`, `openid`
+
+   The `api` scope is required so that oauth2-proxy can forward a usable access
+   token to the gateway via the `X-Forwarded-Access-Token` header.  The gateway
+   uses this token for user-scoped provider calls — project search and webhook
+   registration — so without it those features will not work.
 
 3. Click **Save application**.
 
