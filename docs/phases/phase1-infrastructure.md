@@ -492,9 +492,11 @@ Webhook endpoint steps:
 1. Call `provider.verify_webhook(headers, body, secret)` — return 401 on failure
 2. Call `provider.parse_webhook_event(headers, body)`
 3. Call `map_event_to_task(event)` — return 200 with no body if `None`
-4. Call `kube_client.spawn_agent_job(task_spec)`
-5. Call `db.create_job(...)` with status `"pending"`
-6. Return `{"job_name": job_name}`
+4. Call `config_loader.resolve(project_id, sha)` to get `AgentConfig` (Phase 4 wires this; at Phase 1 use defaults)
+5. Check `event.actor in agent_config.allowed_users` — return 200 with no body if actor not permitted
+6. Call `kube_client.spawn_agent_job(task_spec)`
+7. Call `db.create_job(...)` with status `"pending"`
+8. Return `{"job_name": job_name}`
 
 ### `k8s/` manifests
 

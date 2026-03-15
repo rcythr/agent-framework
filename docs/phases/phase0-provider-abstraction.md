@@ -8,7 +8,7 @@ Establish the provider abstraction layer that all subsequent phases depend on. T
 ### `shared/models.py` (initial)
 Define the following Pydantic models:
 - `TaskSpec` — `task: str`, `project_id: int`, `context: dict[str, Any]`
-- `JobRecord` — `id`, `task`, `project_id`, `project_name`, `status` (Literal), `context`, `started_at`, `finished_at`, `gas_limit`, `gas_used`, `gas_topups`
+- `JobRecord` — `id`, `task`, `project_id`, `project_name`, `status` (Literal), `context`, `started_at`, `finished_at`, `gas_limit_input`, `gas_limit_output`, `gas_used_input`, `gas_used_output`, `gas_topups`
 - `LogEvent` — `job_id`, `sequence`, `timestamp`, `event_type` (Literal of all event types), `payload`
 - `SkillDef`, `ToolDef`, `ProjectConfig`, `AgentConfig`
 - `SessionContext`, `SessionMessage`, `SessionRecord`
@@ -32,6 +32,8 @@ Define the `RepositoryProvider` abstract base class with all abstract methods:
 - `parse_webhook_event(headers, body)` → `PushEvent | MREvent | CommentEvent | None`
 
 Also define all shared data models: `FileContent`, `CommitResult`, `MRResult`, `MergeRequest`, `Commit`, `PushEvent`, `MREvent`, `CommentEvent`.
+
+`PushEvent`, `MREvent`, and `CommentEvent` must each include an `actor: str` field holding the username of the user who triggered the event. This field is extracted from the webhook payload by the provider implementation and is used by the gateway to enforce per-project `allowed_users` access control.
 
 ### `providers/auth_base.py`
 Define:
@@ -92,7 +94,7 @@ pyyaml>=6.0.1
 ## Tests to Write First (TDD)
 
 ### Unit tests — `providers/gitlab/provider.py`
-- `GitLabProvider.parse_webhook_event` maps all three raw GitLab payloads to correct shared event models
+- `GitLabProvider.parse_webhook_event` maps all three raw GitLab payloads to correct shared event models, including the `actor` field populated from the webhook payload's user info
 - `GitLabProvider.parse_webhook_event` returns `None` for unknown event types
 - `GitLabProvider.verify_webhook` returns `True` for valid HMAC signature
 - `GitLabProvider.verify_webhook` returns `False` for invalid signature

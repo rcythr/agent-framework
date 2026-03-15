@@ -40,8 +40,8 @@ class LogEvent(BaseModel):
 | `input_request` | `question: str` |
 | `input_received` | `response: str` |
 | `interrupted` | `redirect_message: str` |
-| `gas_updated` | `gas_used: int`, `gas_limit: int`, `tokens_this_call: int` |
-| `out_of_gas` | `gas_used: int`, `gas_limit: int` |
+| `gas_updated` | `gas_used_input: int`, `gas_limit_input: int`, `gas_used_output: int`, `gas_limit_output: int`, `input_tokens: int`, `output_tokens: int` |
+| `out_of_gas` | `gas_used_input: int`, `gas_limit_input: int`, `gas_used_output: int`, `gas_limit_output: int`, `exhausted: str` |
 
 ### `gateway/db.py` — add `log_events` table
 Add to the existing `db.py`:
@@ -96,7 +96,7 @@ Pass `AgentLogger.handle_event` as the `event_handler` argument when constructin
 - `AgentLogger` emits `tool_result` after execution with `tool_name`, `result`, `duration_ms`
 - `AgentLogger` emits `complete` on clean exit with aggregate counts
 - `AgentLogger` emits `error` with `message` and `traceback` when an exception is raised
-- `AgentLogger` emits `gas_updated` with correct `gas_used`, `gas_limit`, `tokens_this_call`
+- `AgentLogger` emits `gas_updated` with correct `gas_used_input`, `gas_limit_input`, `gas_used_output`, `gas_limit_output`, `input_tokens`, `output_tokens`
 - `AgentLogger` fire-and-forget HTTP — a slow gateway response does not block agent execution; timeout is enforced
 - Sequence numbers are monotonically increasing across concurrent emits
 

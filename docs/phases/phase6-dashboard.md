@@ -29,7 +29,7 @@ Each job is displayed as an **AgentCard** showing:
 - Animated status indicator: pulsing dot for `running`, static for `pending`
 - Elapsed running time, updating every second in the browser
 - Most recent log line as a live preview
-- Gas meter — linear progress bar showing `gas_used / gas_limit` (see Gas Meter section)
+- Gas meters — two linear progress bars showing `gas_used_input / gas_limit_input` and `gas_used_output / gas_limit_output` (see Gas Meter section)
 - **Cancel** button → calls `POST /agents/{id}/cancel`; updates card state optimistically
 
 Clicking a card expands an inline **Log Panel** (see Log Panel section).
@@ -78,24 +78,24 @@ For **historical agents**: fetch `GET /agents/{id}/logs` once and render all eve
 ---
 
 #### Gas Meter
-Present on every AgentCard and in the Log Panel header.
+Present on every AgentCard and in the Log Panel header. Two separate meters are shown — one for input tokens, one for output tokens.
 
 Normal state:
-- Linear progress bar: fill ratio = `gas_used / gas_limit`
-- Label: `{gas_used.toLocaleString()} / {gas_limit.toLocaleString()} tokens`
-- Updates live via `gas_updated` events from the SSE stream
+- Two linear progress bars: input fill = `gas_used_input / gas_limit_input`, output fill = `gas_used_output / gas_limit_output`
+- Labels: `{gas_used_input.toLocaleString()} / {gas_limit_input.toLocaleString()} input tokens` and `{gas_used_output.toLocaleString()} / {gas_limit_output.toLocaleString()} output tokens`
+- Both meters update live via `gas_updated` events from the SSE stream
 
 `out_of_gas` state:
-- Bar fills to 100% and turns amber
+- The exhausted meter fills to 100% and turns amber; the other shows its current fill
 - Banner: *"Agent paused — out of gas. Review the execution trace and add more tokens to continue."*
-- Numeric input pre-populated with a default top-up amount + **Add Gas** button
-- Submitting calls `POST /agents/{id}/gas` with `{"amount": N}`
-- On success: status transitions back to `running`, meter resets to new ratio
+- Two numeric inputs (input tokens / output tokens) pre-populated with default top-up amounts + **Add Gas** button
+- Submitting calls `POST /agents/{id}/gas` with `{"input_amount": N, "output_amount": M}` (either field optional)
+- On success: status transitions back to `running`, meters reset to new ratios
 
 **`POST /agents/{id}/gas` and `GET /agents/{id}/gas` gateway endpoints** (implement in `gateway/main.py`):
-- `POST`: increment `gas_limit` in DB by `amount`; call `POST /internal/jobs/{id}/add-gas` to unblock the agent if it is `out_of_gas`; return updated gas state
-- `POST` on a non-`out_of_gas` job: still increments limit (pre-emptive top-up), does **not** trigger a resume
-- `GET`: return `{"gas_used": N, "gas_limit": N, "topup_history": [...]}`
+- `POST`: increment the specified limit(s) in DB; call `POST /internal/jobs/{id}/add-gas` to unblock the agent if it is `out_of_gas`; return updated gas state
+- `POST` on a non-`out_of_gas` job: still increments limit(s) (pre-emptive top-up), does **not** trigger a resume
+- `GET`: return `{"gas_used_input": N, "gas_limit_input": N, "gas_used_output": N, "gas_limit_output": N, "topup_history": [...]}`
 
 **`POST /internal/jobs/{id}/add-gas` gateway endpoint:**
 - Forwards `amount` to the running worker pod (worker calls `agent.add_gas(amount)`)
@@ -114,14 +114,14 @@ Normal state:
 - `LogPanel` fetches full log history via `GET /agents/{id}/logs` for completed jobs
 - `HistoryRow` retry button is visible only for `failed` jobs; calls `POST /trigger` with original context
 - History search filters rows by project name and task type; status filter works independently
-- Gas meter renders correct fill ratio from `gas_used / gas_limit`
-- Gas meter turns amber and out-of-gas banner appears when status is `out_of_gas`
-- Add Gas button calls `POST /agents/{id}/gas` and optimistically updates meter
+- Gas meters render correct fill ratios from `gas_used_input / gas_limit_input` and `gas_used_output / gas_limit_output`
+- Exhausted gas meter turns amber and out-of-gas banner appears when status is `out_of_gas`
+- Add Gas button calls `POST /agents/{id}/gas` with `{"input_amount": N, "output_amount": M}` and optimistically updates meters
 
 ### Integration tests
 - `POST /agents/{id}/cancel` deletes the K8s Job and sets DB status to `cancelled`
-- `POST /agents/{id}/gas` increments `gas_limit` in DB and calls internal add-gas endpoint; returns updated gas state
-- `POST /agents/{id}/gas` on a non-`out_of_gas` job increments limit without triggering a resume
+- `POST /agents/{id}/gas` increments specified limit(s) in DB and calls internal add-gas endpoint; returns updated gas state
+- `POST /agents/{id}/gas` on a non-`out_of_gas` job increments limit(s) without triggering a resume
 
 ### E2E test (browser + KIND cluster)
 - Navigate to dashboard; verify active jobs appear

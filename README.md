@@ -68,6 +68,8 @@ Provider ──webhook/API──▶  Gateway (persistent K8s Deployment)
 
 **Per-project configuration from the repo itself.** Projects can place a `.agents/config.yaml` in their repository to extend the global agent configuration with custom skills, tools, system prompt additions, and even a custom worker image. The gateway fetches this file at the commit SHA that triggered the event — configuration always matches the code being acted on.
 
+**Webhook dispatch is deny-by-default.** Projects must explicitly list the usernames permitted to trigger automatic agent dispatch in `allowed_users`. If no config file exists or the list is empty, no agents are spawned in response to webhook events — only users with access to the dashboard can launch sessions manually.
+
 **Custom images are layered, not replaced.** Project Dockerfiles must use the global worker image as their `FROM` base. Derived images are built by a Kaniko sidecar, tagged by project ID and Dockerfile content hash, and cached. Projects can add dependencies; they cannot remove the baseline capabilities.
 
 **Interrupts are safe.** User messages to running sessions are delivered at iteration boundaries — never mid-tool-execution. An agent will always finish its current tool call before acting on a redirect or answering a question, preventing partial writes or inconsistent repository state.
@@ -205,6 +207,14 @@ your-repo/
 **`config.yaml` example:**
 
 ```yaml
+# Who can trigger automatic agent dispatch via push, MR, or comment webhooks.
+# Empty or absent = no automatic dispatch for any user (deny-by-default).
+# Manual sessions launched from the dashboard are controlled by dashboard auth.
+allowed_users:
+  - alice
+  - bob
+  - ci-bot
+
 skills:
   - python-testing
   - name: custom-linter
@@ -214,7 +224,8 @@ skills:
 tools:
   - notify-slack
 
-gas_limit: 150000
+gas_limit_input: 120000
+gas_limit_output: 30000
 
 prompt_mode: append
 prompt: |
@@ -226,24 +237,26 @@ dockerfile: Dockerfile
 
 The gateway fetches this file at the exact commit SHA that triggered the agent run — configuration always reflects the code being acted on. Project config extends global defaults; it cannot remove globally registered tools.
 
-If no `.agents/config.yaml` is present, the agent runs with global defaults.
+If no `.agents/config.yaml` is present (or if `allowed_users` is empty), no automatic dispatch will occur for that project.
 
 ---
 
 ## Gas system
 
-Phalanx tracks LLM token consumption per job and session. Every run has a `gas_limit` (budget) and a `gas_used` counter that increments after each LLM call.
+Phalanx tracks LLM token consumption per job and session. Input tokens and output tokens are budgeted separately — every run has a `gas_limit_input` and a `gas_limit_output`, with corresponding `gas_used_input` and `gas_used_output` counters that increment after each LLM call.
 
-When `gas_used` reaches `gas_limit`, the agent pauses. All context is preserved. The dashboard shows the full execution trace up to the pause point and offers a top-up input. Once you add gas, the agent resumes from exactly where it stopped — no re-execution.
+When either counter reaches its limit, the agent pauses. All context is preserved. The dashboard shows the full execution trace up to the pause point, displays both gas meters, and offers top-up inputs for whichever limit needs refilling. Once you add gas, the agent resumes from exactly where it stopped — no re-execution.
 
 Default limits are configured at the gateway level and can be overridden per project in `.agents/config.yaml` or per session in the session launcher.
 
-| Level | Default |
-|---|---|
-| Jobs (system default) | 100,000 tokens |
-| Sessions (system default) | 200,000 tokens |
-| Project override | Set `gas_limit` in `.agents/config.yaml` |
-| Session override | Set in the session launcher form |
+| Level | Input default | Output default |
+|---|---|---|
+| Jobs (system default) | 80,000 tokens | 20,000 tokens |
+| Sessions (system default) | 160,000 tokens | 40,000 tokens |
+| Project override | Set `gas_limit_input` / `gas_limit_output` in `.agents/config.yaml` | ← |
+| Session override | Set in the session launcher form | ← |
+
+Input and output tokens are budgeted separately because they have different per-token costs on most LLM providers. The agent pauses when either limit is reached.
 
 ---
 

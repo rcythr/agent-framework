@@ -179,7 +179,7 @@ class LogEvent(BaseModel):
         "input_received",    # user response received, agent resuming (sessions only)
         "interrupted",       # user sent a redirect message while agent was running
         "gas_updated",       # gas_used updated after an LLM call
-        "out_of_gas",        # gas_limit reached; run paused awaiting top-up
+        "out_of_gas",        # input or output gas_limit reached; run paused awaiting top-up
         "complete",          # agent finished successfully
         "error",             # unhandled exception or LLM error
     ]
@@ -194,11 +194,11 @@ class JobRecord(BaseModel):
     context: dict[str, Any]
     started_at: datetime
     finished_at: datetime | None = None
-    gas_limit: int = 100_000          # token budget allocated to this job
-    gas_used: int = 0                 # total tokens consumed (input + output)
+    gas_limit_input: int = 80_000     # input token budget allocated to this job
+    gas_limit_output: int = 20_000    # output token budget allocated to this job
     gas_used_input: int = 0           # input tokens consumed so far
     gas_used_output: int = 0          # output tokens consumed so far
-    gas_topups: list[int] = []        # record of each top-up amount
+    gas_topups: list[dict] = []       # record of each top-up: {"input": N, "output": M}
 
 class SkillDef(BaseModel):
     name: str
@@ -216,7 +216,11 @@ class ProjectConfig(BaseModel):
     tools: list[ToolDef] = []
     prompt_mode: Literal["append", "override"] = "append"
     prompt: str = ""
-    dockerfile: str | None = None   # repo-relative path to project Dockerfile
+    dockerfile: str | None = None        # repo-relative path to project Dockerfile
+    gas_limit_input: int | None = None   # overrides DEFAULT_JOB_INPUT_GAS_LIMIT if set
+    gas_limit_output: int | None = None  # overrides DEFAULT_JOB_OUTPUT_GAS_LIMIT if set
+    allowed_users: list[str] = []        # usernames permitted to trigger agent dispatch;
+                                         # empty list = all users blocked (deny-by-default)
 
 class AgentConfig(BaseModel):
     """Fully resolved config produced by the config loader — no optional fields."""
@@ -224,6 +228,8 @@ class AgentConfig(BaseModel):
     tools: list[ToolDef]            # global + project, deduplicated
     system_prompt: str              # fully composed prompt string
     image: str                      # registry image tag to use for the K8s Job pod
+    gas_limit_input: int            # resolved input token budget
+    gas_limit_output: int           # resolved output token budget
 
 class SessionContext(BaseModel):
     """User-supplied context when creating an interactive session."""
@@ -234,7 +240,8 @@ class SessionContext(BaseModel):
     mr_iid: int | None = None       # optional: scope session to a specific MR
     skill_overrides: list[str] = [] # skill names to add on top of project config
     tool_overrides: list[str] = []  # tool names to add on top of project config
-    gas_limit: int = 100_000        # token budget for this session; overrides system default
+    gas_limit_input: int = 160_000  # input token budget for this session; overrides system default
+    gas_limit_output: int = 40_000  # output token budget for this session; overrides system default
 
 class SessionMessage(BaseModel):
     """A single message in an interactive session conversation."""
@@ -263,11 +270,11 @@ class SessionRecord(BaseModel):
     context: SessionContext
     created_at: datetime
     finished_at: datetime | None = None
-    gas_limit: int = 100_000          # token budget for this session
-    gas_used: int = 0                 # total tokens consumed (input + output)
+    gas_limit_input: int = 160_000    # input token budget for this session
+    gas_limit_output: int = 40_000    # output token budget for this session
     gas_used_input: int = 0           # input tokens consumed so far
     gas_used_output: int = 0          # output tokens consumed so far
-    gas_topups: list[int] = []        # record of each top-up amount
+    gas_topups: list[dict] = []       # record of each top-up: {"input": N, "output": M}
 ```
 
 **`LogEvent.payload` shapes by event type:**
@@ -283,8 +290,8 @@ class SessionRecord(BaseModel):
 | `input_request` | `question: str` |
 | `input_received` | `response: str` |
 | `interrupted` | `redirect_message: str` |
-| `gas_updated` | `gas_used: int`, `gas_limit: int`, `input_tokens: int`, `output_tokens: int` |
-| `out_of_gas` | `gas_used: int`, `gas_limit: int` |
+| `gas_updated` | `gas_used_input: int`, `gas_limit_input: int`, `gas_used_output: int`, `gas_limit_output: int`, `input_tokens: int`, `output_tokens: int` |
+| `out_of_gas` | `gas_used_input: int`, `gas_limit_input: int`, `gas_used_output: int`, `gas_limit_output: int`, `exhausted: Literal["input", "output", "both"]` |
 
 ---
 
@@ -317,17 +324,20 @@ class PushEvent(BaseModel):
     branch: str
     commits: list[Commit]
     project_id: int | str
+    actor: str             # username of the user who pushed
 
 class MREvent(BaseModel):
     mr: MergeRequest
     project_id: int | str
     action: str            # "open", "update", "close", "merge"
+    actor: str             # username of the user who opened/updated the MR
 
 class CommentEvent(BaseModel):
     body: str
     project_id: int | str
     mr_iid: int | None
     note_id: int | str
+    actor: str             # username of the user who posted the comment
 
 class FileContent(BaseModel):
     path: str
@@ -566,10 +576,20 @@ tools:
     description: "Execute the project test suite via the CI API"
     inline: true
 
-# Token budget for agent jobs triggered from this project.
-# Overrides the system default (DEFAULT_JOB_GAS_LIMIT).
-# Sessions have their own gas_limit set in the session launcher.
-gas_limit: 150000
+# Users permitted to trigger agent dispatch via webhooks (push, MR, comment events).
+# Only these usernames will cause an agent to be spawned automatically.
+# Empty list = no automatic dispatch (deny-by-default).
+# Manual sessions launched from the dashboard are controlled by dashboard auth instead.
+allowed_users:
+  - alice
+  - bob
+  - ci-bot
+
+# Token budgets for agent jobs triggered from this project.
+# Overrides the system defaults (DEFAULT_JOB_INPUT_GAS_LIMIT / DEFAULT_JOB_OUTPUT_GAS_LIMIT).
+# Sessions have their own gas limits set in the session launcher.
+gas_limit_input: 120000
+gas_limit_output: 30000
 
 # System prompt behaviour.
 # "append" adds text after the global base prompt (default).
@@ -619,6 +639,21 @@ The config loader is called by the gateway immediately after a webhook event is 
 - Resolve prompt: if `prompt_mode: append`, concatenate global base prompt + project prompt; if `prompt_mode: override`, use project prompt only
 - Resolve image: if `dockerfile` is set, trigger the image builder (see below) and return the derived image tag; otherwise return the global worker image tag
 - Return a fully resolved `AgentConfig` with no optional fields — the job spawner never needs to reason about defaults
+
+**Access control** — after resolving the project config, the gateway checks the event actor against `allowed_users` before spawning a job:
+
+```python
+def is_actor_allowed(actor: str, project_config: ProjectConfig) -> bool:
+    """
+    Return True if the actor is permitted to trigger agent dispatch for this project.
+    An empty allowed_users list means no one is permitted (deny-by-default).
+    """
+    return actor in project_config.allowed_users
+```
+
+If the actor is not in `allowed_users`, the gateway returns HTTP 200 (to avoid leaking configuration to the webhook sender) but logs the rejection and does **not** spawn a job. Projects that have not yet configured `.agents/config.yaml` also receive no dispatch — the empty default `allowed_users` is deny-by-default. Projects must explicitly list the usernames authorised to trigger agents.
+
+This check applies to all webhook-triggered dispatch (push, MR open/update, comment). It does not apply to manually triggered jobs via `POST /trigger`, which are protected by the dashboard authentication layer instead.
 
 **Image build flow** (when `dockerfile` is present):
 
@@ -792,7 +827,7 @@ configuring ──(job spawned)──▶ running
                                   │
               ┌───────────────────┼──────────────────┐
               │                   │                  │
-   (agent asks question)  (agent loop     (gas_used >= gas_limit)
+   (agent asks question)  (agent loop     (input or output limit reached)
               │             iterates)               │
               ▼                   │                  ▼
       waiting_for_user            │           out_of_gas
@@ -818,7 +853,7 @@ Receives GitLab webhooks and manual trigger requests, validates webhook tokens, 
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/webhook/{provider}` | Receives provider webhook events (e.g. `/webhook/gitlab`, `/webhook/github`); provider verifies signature and parses to a shared event model before dispatch |
+| `POST` | `/webhook/{provider}` | Receives provider webhook events (e.g. `/webhook/gitlab`, `/webhook/github`); provider verifies signature, parses to shared event model, checks actor against `allowed_users` in project config before dispatch |
 | `POST` | `/trigger` | Manual trigger: accepts a `TaskSpec`, spawns an agent job |
 | `POST` | `/internal/log` | Called by worker pods to ingest structured `LogEvent` records |
 | `POST` | `/internal/jobs/{id}/status` | Called by worker pods on completion or failure |
@@ -828,8 +863,8 @@ Receives GitLab webhooks and manual trigger requests, validates webhook tokens, 
 | `GET` | `/agents/{id}/logs` | Full log event list for a job (for history replay) |
 | `GET` | `/agents/{id}/logs/stream` | SSE stream of log events for a live running job |
 | `POST` | `/agents/{id}/cancel` | Deletes the K8s Job and marks the DB record cancelled |
-| `GET` | `/agents/{id}/gas` | Return gas usage and top-up history for a job |
-| `POST` | `/agents/{id}/gas` | Add tokens to a job's gas limit; resumes `out_of_gas` jobs |
+| `GET` | `/agents/{id}/gas` | Return `gas_used_input`, `gas_used_output`, `gas_limit_input`, `gas_limit_output`, `topup_history` for a job |
+| `POST` | `/agents/{id}/gas` | Add input and/or output tokens to a job's limits; body: `{"input_amount": N, "output_amount": M}`; resumes `out_of_gas` jobs |
 | `POST` | `/sessions` | Create a new interactive session: accepts `SessionContext`, resolves config, spawns K8s Job, returns `SessionRecord` |
 | `GET` | `/sessions` | List the authenticated user's sessions (active and recent) |
 | `GET` | `/sessions/{id}` | Single session record with metadata and status |
@@ -837,8 +872,8 @@ Receives GitLab webhooks and manual trigger requests, validates webhook tokens, 
 | `GET` | `/sessions/{id}/stream` | SSE stream delivering both `SessionMessage` and `LogEvent` records interleaved in real time |
 | `POST` | `/sessions/{id}/messages` | Send a user message to a running session (instruction, interrupt, or input response) |
 | `POST` | `/sessions/{id}/cancel` | Cancel a running session |
-| `GET` | `/sessions/{id}/gas` | Return gas usage and top-up history for a session |
-| `POST` | `/sessions/{id}/gas` | Add tokens to a session's gas limit; resumes `out_of_gas` sessions |
+| `GET` | `/sessions/{id}/gas` | Return `gas_used_input`, `gas_used_output`, `gas_limit_input`, `gas_limit_output`, `topup_history` for a session |
+| `POST` | `/sessions/{id}/gas` | Add input and/or output tokens to a session's limits; body: `{"input_amount": N, "output_amount": M}`; resumes `out_of_gas` sessions |
 | `GET` | `/projects/search` | Proxy to provider `search_projects()` filtered to projects the authenticated user can access; used by the session launcher |
 | `GET` | `/projects/{id}/branches` | Proxy to provider `list_branches()` for a given project; used by the session launcher |
 | `GET` | `/projects/{id}/mrs` | Proxy to provider `list_open_mrs()` for a given project; used by the session launcher |
@@ -1009,7 +1044,7 @@ The loop runs until the LLM returns a message with no tool calls:
 
 **Gas tracking:**
 
-Each `llm_response` event includes `input_tokens` and `output_tokens` from the LLM response. The `Agent` accumulates these into `self.tokens_used` and emits a `gas_updated` event after every LLM call. If `tokens_used >= gas_limit`, the agent emits an `out_of_gas` event and suspends — it does not start another LLM call. The loop resumes only when `agent.add_gas(amount)` is called, which increases `gas_limit` by `amount` and re-enters the loop.
+Each `llm_response` event includes `input_tokens` and `output_tokens` from the LLM response. The `Agent` accumulates these into `self._gas_used_input` and `self._gas_used_output` separately and emits a `gas_updated` event after every LLM call. If either counter reaches its corresponding limit (`gas_limit_input` or `gas_limit_output`), the agent emits an `out_of_gas` event indicating which limit was exhausted and suspends — it does not start another LLM call. The loop resumes only when `agent.add_gas(input_amount, output_amount)` is called, which increases one or both limits and re-enters the loop.
 
 **Two message queues:**
 
@@ -1041,6 +1076,8 @@ class Agent:
         tools: list[ToolDef],
         system_prompt: str,
         event_handler: Callable[[AgentEvent], Awaitable[None]],
+        gas_limit_input: int = 80_000,
+        gas_limit_output: int = 20_000,
     ): ...
 
     async def run(self, initial_message: str) -> None: ...
@@ -1051,11 +1088,14 @@ class Agent:
     def follow_up(self, message: str) -> None:
         ...
 
-    def add_gas(self, amount: int) -> None:
+    def add_gas(self, input_amount: int = 0, output_amount: int = 0) -> None:
         ...
 
     @property
-    def gas_used(self) -> int: ...
+    def gas_used_input(self) -> int: ...
+
+    @property
+    def gas_used_output(self) -> int: ...
 ```
 
 The `event_handler` callback is how `AgentLogger` attaches to the loop — the agent emits; the logger persists and streams to the gateway. This keeps the agent loop free of any I/O concerns beyond the LLM API call itself.
@@ -1156,80 +1196,88 @@ if __name__ == "__main__":
 
 The gas system gives operators and users explicit control over how many LLM tokens an agent is permitted to consume on a task or session. It is the primary mechanism for controlling cost and preventing runaway agent loops.
 
-Gas is measured in **tokens** — the sum of input and output tokens across all LLM calls made during a run. Every job and session has a `gas_limit` (the budget) and `gas_used` (running total). When `gas_used` reaches `gas_limit` the agent pauses in an `out_of_gas` state: all context is preserved, no further LLM calls are made, and the run is fully resumable once additional gas is allocated.
+Input tokens and output tokens are tracked and budgeted **separately**. Every job and session has a `gas_limit_input` and a `gas_limit_output`, and corresponding `gas_used_input` and `gas_used_output` counters. The agent enters `out_of_gas` state when either counter reaches its limit. This lets operators tune budgets for prompt-heavy vs generation-heavy workloads independently, and reflects that input and output tokens have different per-token costs on most LLM providers.
+
+When `out_of_gas` is reached, all context is preserved, no further LLM calls are made, and the run is fully resumable once additional gas is allocated to whichever limit was hit.
 
 ### Default Gas Limits
 
 Default gas limits are configured at the gateway level via environment variables and can be overridden per project in `.agents/config.yaml` and per session in the session launcher:
 
-| Level | Config key | Default |
+| Level | Config keys | Default |
 |---|---|---|
-| System default (jobs) | `DEFAULT_JOB_GAS_LIMIT` env var | `100,000` tokens |
-| System default (sessions) | `DEFAULT_SESSION_GAS_LIMIT` env var | `200,000` tokens |
-| Project override (jobs) | `gas_limit` in `.agents/config.yaml` | inherits system default |
-| Session override | `gas_limit` in `SessionContext` | inherits system default |
+| System default (jobs) | `DEFAULT_JOB_INPUT_GAS_LIMIT` / `DEFAULT_JOB_OUTPUT_GAS_LIMIT` | `80,000` / `20,000` tokens |
+| System default (sessions) | `DEFAULT_SESSION_INPUT_GAS_LIMIT` / `DEFAULT_SESSION_OUTPUT_GAS_LIMIT` | `160,000` / `40,000` tokens |
+| Project override (jobs) | `gas_limit_input` / `gas_limit_output` in `.agents/config.yaml` | inherits system default |
+| Session override | `gas_limit_input` / `gas_limit_output` in `SessionContext` | inherits system default |
 
 ### Gas Flow
 
 ```
 Agent makes LLM call
         ↓
-LLM response received — input_tokens + output_tokens extracted
+LLM response received — input_tokens and output_tokens extracted separately
         ↓
-Agent emits gas_updated event: {gas_used, gas_limit, tokens_this_call}
+Agent emits gas_updated event:
+  {gas_used_input, gas_limit_input, gas_used_output, gas_limit_output,
+   input_tokens, output_tokens}
         ↓
-AgentLogger forwards to gateway → gateway updates gas_used in DB
+AgentLogger forwards to gateway → gateway updates both counters in DB
         ↓
-gas_used >= gas_limit?
+gas_used_input >= gas_limit_input  OR  gas_used_output >= gas_limit_output?
     NO  → continue agent loop normally
-    YES → Agent emits out_of_gas event
+    YES → Agent emits out_of_gas event (includes which limit was hit)
           Agent suspends loop (does not make another LLM call)
           Gateway sets job/session status → out_of_gas
-          Dashboard shows gas meter at 100%, prompts user to top up
+          Dashboard shows both gas meters, prompts user to top up
         ↓
-User reviews run in dashboard, clicks "Add gas", enters additional tokens
+User reviews run in dashboard, clicks "Add gas", enters top-up amounts
         ↓
-POST /agents/{id}/gas or POST /sessions/{id}/gas with {"amount": N}
+POST /agents/{id}/gas or POST /sessions/{id}/gas
+  body: {"input_amount": N, "output_amount": M}  (either field optional)
         ↓
-Gateway increments gas_limit by N in DB
-Gateway calls agent.add_gas(N) via POST /internal/jobs/{id}/add-gas
+Gateway increments the specified limit(s) in DB
+Gateway calls agent.add_gas(input_amount, output_amount) via
+  POST /internal/jobs/{id}/add-gas
         ↓
-Agent increments gas_limit, re-enters loop from where it paused
+Agent increments limit(s), re-enters loop from where it paused
 Status → running, agent continues
 ```
 
 ### Gas in the Agent Class
 
-The `Agent` class tracks gas internally:
+The `Agent` class tracks input and output gas independently:
 
-- `self._gas_used` — accumulated token count across all LLM calls
-- `self._gas_limit` — current limit; increases when `add_gas()` is called
-- After each LLM call: `self._gas_used += input_tokens + output_tokens`
-- Before each new LLM call: if `self._gas_used >= self._gas_limit`, emit `out_of_gas` event and `await self._gas_event.wait()` — an `asyncio.Event` that is set by `add_gas()`
-- `add_gas(amount)` increments `self._gas_limit` and calls `self._gas_event.set()`, which unblocks the suspended loop
+- `self._gas_used_input` — accumulated input token count across all LLM calls
+- `self._gas_used_output` — accumulated output token count across all LLM calls
+- `self._gas_limit_input` — input token budget; increases when `add_gas()` is called
+- `self._gas_limit_output` — output token budget; increases when `add_gas()` is called
+- After each LLM call: `self._gas_used_input += input_tokens; self._gas_used_output += output_tokens`
+- Before each new LLM call: if either limit is exceeded, emit `out_of_gas` and `await self._gas_event.wait()` — an `asyncio.Event` set by `add_gas()`
+- `add_gas(input_amount=0, output_amount=0)` increments the specified limit(s) and calls `self._gas_event.set()`, which unblocks the suspended loop
 
 ### Gas API Endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/agents/{id}/gas` | Add gas to a job; body: `{"amount": N}` |
-| `POST` | `/sessions/{id}/gas` | Add gas to a session; body: `{"amount": N}` |
-| `GET` | `/agents/{id}/gas` | Return current `gas_used`, `gas_limit`, `topup_history` |
-| `GET` | `/sessions/{id}/gas` | Return current `gas_used`, `gas_limit`, `topup_history` |
+| `POST` | `/agents/{id}/gas` | Add gas to a job; body: `{"input_amount": N, "output_amount": M}` |
+| `POST` | `/sessions/{id}/gas` | Add gas to a session; body: `{"input_amount": N, "output_amount": M}` |
+| `GET` | `/agents/{id}/gas` | Return `gas_used_input`, `gas_used_output`, `gas_limit_input`, `gas_limit_output`, `topup_history` |
+| `GET` | `/sessions/{id}/gas` | Return `gas_used_input`, `gas_used_output`, `gas_limit_input`, `gas_limit_output`, `topup_history` |
 
-The `POST` endpoints are accessible to any authenticated user. In a future access control layer they could be restricted to job/session owners or operators.
+Both `input_amount` and `output_amount` are optional in the POST body — supply only the limit(s) that need topping up. The `POST` endpoints are accessible to any authenticated user.
 
 ### Gas in the Dashboard
 
-Every job card and session card in the dashboard displays a **gas meter** — a linear progress bar showing `gas_used / gas_limit`. The meter updates live via the SSE stream as `gas_updated` events arrive.
+Every job card and session card in the dashboard displays two **gas meters** — one for input tokens showing `gas_used_input / gas_limit_input`, one for output tokens showing `gas_used_output / gas_limit_output`. Both meters update live via the SSE stream as `gas_updated` events arrive.
 
 When a job or session reaches `out_of_gas` status:
-- The gas meter fills to 100% and turns amber
+- The exhausted meter fills to 100% and turns amber; the other meter shows its current fill
 - A banner appears: *"Agent paused — out of gas. Review the execution trace below and add more tokens to continue."*
-- A numeric input and **Add Gas** button appear, pre-populated with the system default top-up amount
-- Submitting calls `POST /agents/{id}/gas` or `POST /sessions/{id}/gas`; the status transitions back to `running` and the meter resets to the new ratio
+- Two numeric inputs appear — one for input tokens and one for output tokens — each pre-populated with the system default top-up amount, plus an **Add Gas** button
+- Submitting calls `POST /agents/{id}/gas` or `POST /sessions/{id}/gas`; the status transitions back to `running` and the meters reset to the new ratios
 
-The full execution trace (all log events up to the pause point) remains visible while the run is `out_of_gas`, so the user has full context before deciding whether to continue.
+The full execution trace remains visible while the run is `out_of_gas`, so the user has full context before deciding how much gas to add and which type.
 
 ---
 
@@ -1517,8 +1565,8 @@ trigger-pi-agent:
         ↓
 10. Steps 7–9 repeat for each agent loop iteration
         ↓
-    After each LLM call: Agent emits gas_updated event → gateway updates gas_used in DB
-    If gas_used >= gas_limit: Agent emits out_of_gas → gateway sets status out_of_gas
+    After each LLM call: Agent emits gas_updated event → gateway updates gas_used_input/gas_used_output in DB
+    If gas_used_input >= gas_limit_input or gas_used_output >= gas_limit_output: Agent emits out_of_gas → gateway sets status out_of_gas
     Dashboard shows full trace + top-up prompt; user can add gas to resume
         ↓
 11. Agent loop completes:
@@ -1814,8 +1862,9 @@ Phases are ordered so that every phase produces a working, observable system. In
 - Unit: `Agent.steer()` message is injected after the current tool, before remaining tools in the same turn
 - Unit: `Agent.follow_up()` message is injected only after the agent is fully idle
 - Unit: `Agent` calls `event_handler` in correct order: llm_query -> llm_response -> gas_updated -> tool_call -> tool_result (repeat) -> complete
-- Unit: `Agent` emits `out_of_gas` and suspends when `gas_used >= gas_limit` before the next LLM call
-- Unit: `Agent.add_gas(N)` increments `gas_limit` and resumes the suspended loop
+- Unit: `Agent` emits `out_of_gas` and suspends when `gas_used_input >= gas_limit_input` or `gas_used_output >= gas_limit_output` before the next LLM call
+- Unit: `Agent.add_gas(input_amount=N)` increments `gas_limit_input` and resumes the suspended loop
+- Unit: `Agent.add_gas(output_amount=N)` increments `gas_limit_output` and resumes the suspended loop
 - Unit: gas is checked before each LLM call, not mid-tool — tool execution is never interrupted by an out-of-gas condition
 - Unit: `run_agent` constructs `Agent` with correct arguments — mock `Agent.run`
 - Integration: `POST /internal/jobs/{id}/status` with `{"status": "completed"}` updates DB and returns 200; unknown job ID returns 404
@@ -1937,11 +1986,11 @@ Phases are ordered so that every phase produces a working, observable system. In
 - Unit (React): `HistoryRow` retry button is visible only for `failed` jobs; calls `POST /trigger` with original context
 - Unit (React): history search filters rows by project name and task type; status filter works independently
 - Integration: `POST /agents/{id}/cancel` deletes the K8s Job and sets DB status to `cancelled`
-- Integration: `POST /agents/{id}/gas` increments `gas_limit` in DB and calls internal add-gas endpoint; returns updated gas state
-- Integration: `POST /agents/{id}/gas` on a non-`out_of_gas` job still increments limit (pre-emptive top-up) without triggering a resume
-- Unit (React): gas meter renders correct fill ratio from `gas_used / gas_limit`
-- Unit (React): gas meter turns amber and out-of-gas banner appears when status is `out_of_gas`
-- Unit (React): Add Gas button calls `POST /agents/{id}/gas` and optimistically updates meter
+- Integration: `POST /agents/{id}/gas` increments specified limit(s) in DB and calls internal add-gas endpoint; returns updated gas state
+- Integration: `POST /agents/{id}/gas` on a non-`out_of_gas` job still increments limit(s) (pre-emptive top-up) without triggering a resume
+- Unit (React): gas meters render correct fill ratios from `gas_used_input / gas_limit_input` and `gas_used_output / gas_limit_output`
+- Unit (React): exhausted gas meter turns amber and out-of-gas banner appears when status is `out_of_gas`
+- Unit (React): Add Gas button calls `POST /agents/{id}/gas` with `{"input_amount": N, "output_amount": M}` and optimistically updates meters
 - E2E (browser): navigate to dashboard; verify active jobs appear; expand log panel; verify events stream in; cancel a job; verify status updates
 
 **Definition of done:** Operators can monitor all agent activity, inspect full execution traces, cancel running jobs, and retry failed ones entirely from the browser.
@@ -2090,4 +2139,4 @@ Additionally, the project configuration layer is independently extensible:
 8. **New image build strategy** → implement alongside the Kaniko builder in `config_loader.py` — the rest of the stack only cares about the resolved image tag
 9. **New session message type** → add to the `message_type` Literal in `SessionMessage`, handle in `session_broker.py`, add a renderer in the conversation thread UI
 10. **New launcher context field** → add to `SessionContext`, surface in the session launcher form, pass through to the worker via env var — no changes to the broker or message protocol required
-11. **Gas limit policy change** → adjust `DEFAULT_JOB_GAS_LIMIT` / `DEFAULT_SESSION_GAS_LIMIT` env vars or project-level `gas_limit` in `.agents/config.yaml` — no code changes required
+11. **Gas limit policy change** → adjust `DEFAULT_JOB_INPUT_GAS_LIMIT` / `DEFAULT_JOB_OUTPUT_GAS_LIMIT` / `DEFAULT_SESSION_INPUT_GAS_LIMIT` / `DEFAULT_SESSION_OUTPUT_GAS_LIMIT` env vars or project-level `gas_limit_input` / `gas_limit_output` in `.agents/config.yaml` — no code changes required
