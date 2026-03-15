@@ -136,7 +136,8 @@ phalanx/
 │       ├── values.yaml
 │       └── templates/
 ├── docs/
-│   ├── ARCHITECTURE.md         # Deep-dive technical architecture
+│   ├── ARCHITECTURE.md         # Architecture overview (links to sub-documents)
+│   ├── architecture/           # Detailed architecture sub-documents
 │   ├── walkthrough.md          # End-to-end usage walkthrough
 │   ├── gitlab-oauth-setup.md
 │   └── providers/              # Per-provider setup guides
