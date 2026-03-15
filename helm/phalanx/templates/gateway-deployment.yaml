@@ -1,0 +1,167 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pi-agent-gateway
+  namespace: {{ include "phalanx.namespace" . }}
+  labels:
+    app: pi-agent-gateway
+    {{- include "phalanx.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels:
+      app: pi-agent-gateway
+  template:
+    metadata:
+      labels:
+        app: pi-agent-gateway
+    spec:
+      serviceAccountName: pi-agent-gateway
+      {{- if .Values.customCACerts }}
+      volumes:
+        - name: ca-certs
+          configMap:
+            name: phalanx-ca-certs
+        - name: gateway-data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: phalanx-gateway-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- else if .Values.persistence.enabled }}
+      volumes:
+        - name: gateway-data
+          persistentVolumeClaim:
+            claimName: phalanx-gateway-data
+      {{- end }}
+      containers:
+        - name: gateway
+          image: {{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}
+          imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
+          ports:
+            - containerPort: 3000
+          {{- if or .Values.customCACerts .Values.persistence.enabled }}
+          volumeMounts:
+            {{- if .Values.customCACerts }}
+            - name: ca-certs
+              mountPath: /etc/phalanx/certs
+              readOnly: true
+            {{- end }}
+            {{- if .Values.persistence.enabled }}
+            - name: gateway-data
+              mountPath: /data
+            {{- end }}
+          {{- end }}
+          {{- with .Values.gateway.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: PROVIDER
+              value: {{ .Values.provider | quote }}
+            # ── LLM ──────────────────────────────────────────────────────────
+            - name: LLM_API_BASE
+              value: {{ .Values.llm.baseUrl | quote }}
+            - name: LLM_MODEL
+              value: {{ .Values.llm.model | quote }}
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: llm-creds
+                  key: api-key
+            # ── GitLab ───────────────────────────────────────────────────────
+            - name: GITLAB_URL
+              value: {{ .Values.gitlab.url | quote }}
+            - name: GITLAB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-creds
+                  key: token
+            - name: GITLAB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-creds
+                  key: webhook-secret
+            # ── GitHub ───────────────────────────────────────────────────────
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-creds
+                  key: token
+                  optional: true
+            - name: GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: github-creds
+                  key: webhook-secret
+                  optional: true
+            # ── Bitbucket ────────────────────────────────────────────────────
+            - name: BITBUCKET_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: bitbucket-creds
+                  key: username
+                  optional: true
+            - name: BITBUCKET_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bitbucket-creds
+                  key: app-password
+                  optional: true
+            - name: BITBUCKET_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bitbucket-creds
+                  key: webhook-secret
+                  optional: true
+            # ── Gitea ────────────────────────────────────────────────────────
+            - name: GITEA_URL
+              value: {{ .Values.gitea.url | default "" | quote }}
+            - name: GITEA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gitea-creds
+                  key: token
+                  optional: true
+            - name: GITEA_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: gitea-creds
+                  key: webhook-secret
+                  optional: true
+            # ── Worker image / gas limits ─────────────────────────────────────
+            - name: PI_AGENT_IMAGE
+              value: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+            - name: PI_AGENT_NAMESPACE
+              value: {{ include "phalanx.namespace" . | quote }}
+            - name: AGENT_CONFIG_DIR
+              value: ".agents"
+            - name: DEFAULT_JOB_INPUT_GAS_LIMIT
+              value: {{ .Values.gas.defaultJobInputLimit | quote }}
+            - name: DEFAULT_JOB_OUTPUT_GAS_LIMIT
+              value: {{ .Values.gas.defaultJobOutputLimit | quote }}
+            - name: DEFAULT_SESSION_INPUT_GAS_LIMIT
+              value: {{ .Values.gas.defaultSessionInputLimit | quote }}
+            - name: DEFAULT_SESSION_OUTPUT_GAS_LIMIT
+              value: {{ .Values.gas.defaultSessionOutputLimit | quote }}
+            {{- if .Values.customCACerts }}
+            - name: REQUESTS_CA_BUNDLE
+              value: /etc/phalanx/certs/ca-bundle.crt
+            - name: SSL_CERT_FILE
+              value: /etc/phalanx/certs/ca-bundle.crt
+            {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pi-agent-gateway
+  namespace: {{ include "phalanx.namespace" . }}
+  labels:
+    {{- include "phalanx.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: pi-agent-gateway
+  ports:
+    - port: 80
+      targetPort: 3000

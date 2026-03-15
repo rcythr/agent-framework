@@ -5,4 +5,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY worker/ ./worker/
 COPY shared/ ./shared/
 COPY providers/ ./providers/
+
+# Custom root certificates
+# Mount a PEM bundle at /etc/phalanx/certs/ca-bundle.crt to trust additional CAs.
+# The entrypoint script below merges it with the system bundle and sets the
+# standard environment variables so all Python HTTPS clients pick it up.
+COPY scripts/docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["python", "-m", "worker.main"]

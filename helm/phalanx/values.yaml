@@ -1,0 +1,128 @@
+# Phalanx Helm chart — default values
+# Override any of these with --set or a custom values file.
+
+# ── Images ────────────────────────────────────────────────────────────────────
+
+gateway:
+  image:
+    repository: ghcr.io/rcythr/phalanx-gateway
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+worker:
+  image:
+    repository: ghcr.io/rcythr/phalanx-worker
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 2000m
+      memory: 1Gi
+
+# ── Provider ──────────────────────────────────────────────────────────────────
+
+# Which Git provider to use: gitlab | github | bitbucket | gitea
+provider: gitlab
+
+gitlab:
+  url: ""                  # e.g. https://gitlab.example.com
+  token: ""                # personal access token or service account token
+  webhookSecret: ""        # random secret shared with GitLab webhook config
+  group: ""                # optional: restrict OAuth login to members of this group
+
+github:
+  token: ""
+  webhookSecret: ""
+
+bitbucket:
+  username: ""
+  appPassword: ""
+  webhookSecret: ""
+
+gitea:
+  url: ""
+  token: ""
+  webhookSecret: ""
+
+# ── LLM ───────────────────────────────────────────────────────────────────────
+
+llm:
+  apiKey: ""               # OpenAI API key (or compatible provider key)
+  baseUrl: "https://api.openai.com/v1"
+  model: "gpt-4o"
+
+# ── Gas limits ────────────────────────────────────────────────────────────────
+
+gas:
+  defaultJobInputLimit: 80000
+  defaultJobOutputLimit: 20000
+  defaultSessionInputLimit: 160000
+  defaultSessionOutputLimit: 40000
+
+# ── OAuth2 proxy (dashboard authentication) ───────────────────────────────────
+
+oauth2proxy:
+  enabled: true
+  image:
+    repository: quay.io/oauth2-proxy/oauth2-proxy
+    tag: latest
+    pullPolicy: IfNotPresent
+  # Generate with: openssl rand -base64 32
+  cookieSecret: ""
+  clientId: ""
+  clientSecret: ""
+  # Upstream provider for oauth2-proxy (matches `provider` above by default)
+  provider: ""             # leave empty to use the global `provider` value
+
+# ── Ingress ───────────────────────────────────────────────────────────────────
+
+ingress:
+  enabled: true
+  className: nginx
+  host: phalanx.example.com
+  tls:
+    enabled: false
+    secretName: phalanx-tls
+
+# ── Namespace ─────────────────────────────────────────────────────────────────
+
+namespace:
+  create: true
+  name: pi-agents
+
+# ── Custom root certificates ──────────────────────────────────────────────────
+# Supply PEM-encoded certificate(s) to trust when connecting to the provider
+# API or LLM endpoint over TLS. Useful in corporate / air-gapped environments.
+# Both gateway and worker containers will trust these certificates.
+#
+# Example:
+#   customCACerts: |
+#     -----BEGIN CERTIFICATE-----
+#     MIIBxTCCAW...
+#     -----END CERTIFICATE-----
+
+customCACerts: ""
+
+# ── Persistence ───────────────────────────────────────────────────────────────
+
+persistence:
+  enabled: true
+  storageClass: ""         # leave empty to use cluster default
+  size: 1Gi
+
+# ── Service account ───────────────────────────────────────────────────────────
+
+serviceAccount:
+  create: true
+  annotations: {}
