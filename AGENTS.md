@@ -20,7 +20,7 @@ phalanx/
 ├── worker/             # Python entrypoint for K8s Job pods
 ├── providers/          # Git provider abstraction + implementations
 ├── shared/             # Pydantic models shared between gateway and worker
-├── dashboard/          # Single-file React SPA (index.html — no build step)
+├── dashboard/          # Vue 3 + Vite SPA (src/ → dist/ via npm run build)
 ├── global-config/      # Default agent config, global skills and tools
 ├── k8s/                # Raw Kubernetes manifests (local dev)
 ├── helm/               # Helm chart for production deployment
@@ -108,7 +108,7 @@ Key gateway endpoint groups in `gateway/main.py`:
 | Gateway internals (config loader → API endpoints) | [`docs/architecture/gateway.md`](docs/architecture/gateway.md) | 1–263 |
 | Worker internals (toolkit → agent loop → runner) | [`docs/architecture/worker.md`](docs/architecture/worker.md) | 1–303 |
 | Gas / token budget system | [`docs/architecture/gas-system.md`](docs/architecture/gas-system.md) | 1–90 |
-| Dashboard (views, session UI, log panel) | [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md) | 1–70 |
+| Dashboard (views, session UI, log panel) | [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md) | 1–120 |
 | Docker images + K8s manifests + webhook setup | [`docs/architecture/deployment.md`](docs/architecture/deployment.md) | 1–179 |
 | End-to-end flow + interactive session flow | [`docs/architecture/flows.md`](docs/architecture/flows.md) | 1–99 |
 | `AuthProvider` abstraction + oauth2-proxy config | [`docs/architecture/authentication.md`](docs/architecture/authentication.md) | 1–119 |
@@ -244,7 +244,7 @@ Full walkthrough: [`docs/walkthrough.md:22-90`](docs/walkthrough.md)
 
 **Adding a new Helm value** — `helm/phalanx/values.yaml` (add with default); reference in relevant template under `helm/phalanx/templates/`.
 
-**Modifying the dashboard** — `dashboard/index.html` only. React 18 from CDN, Babel transpilation at runtime. No build step.
+**Modifying the dashboard** — edit Vue SFCs under `dashboard/src/`. Run `npm run build` in `dashboard/` after changes to update `dashboard/dist/` (served by the gateway). Use `npm run dev` for live-reload development on port 5173 (API calls are proxied to the gateway at port 3000). See [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md) for the full component tree.
 
 **Modifying shared models** — `shared/models.py`; check every serialisation point in both `gateway/` and `worker/` afterwards.
 

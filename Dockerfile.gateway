@@ -1,3 +1,12 @@
+# ── Stage 1: build the Vue/Vite dashboard ─────────────────────────────────────
+FROM node:20-slim AS frontend-builder
+WORKDIR /app/dashboard
+COPY dashboard/package.json dashboard/package-lock.json* ./
+RUN npm ci
+COPY dashboard/ .
+RUN npm run build
+
+# ── Stage 2: gateway image ─────────────────────────────────────────────────────
 FROM python:3.12-slim
 WORKDIR /app
 COPY requirements.txt .
@@ -5,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY gateway/ ./gateway/
 COPY shared/ ./shared/
 COPY providers/ ./providers/
+
+# Copy the compiled dashboard
+COPY --from=frontend-builder /app/dashboard/dist ./dashboard/dist
 
 # Custom root certificates
 # Mount a PEM bundle at /etc/phalanx/certs/ca-bundle.crt to trust additional CAs.
