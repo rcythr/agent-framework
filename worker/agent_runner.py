@@ -4,6 +4,7 @@ import os
 import httpx
 
 from worker.agent import Agent, AgentEvent
+from worker.agent_logger import AgentLogger
 from worker.tools.toolkit_factory import get_toolkit
 
 
@@ -58,11 +59,18 @@ async def run_agent(task: str, project_id: int, context: dict) -> None:
     gas_limit_input = int(os.getenv("GAS_LIMIT_INPUT", "80000"))
     gas_limit_output = int(os.getenv("GAS_LIMIT_OUTPUT", "20000"))
 
+    job_id = os.getenv("JOB_ID", "")
+    gateway_url = os.getenv("GATEWAY_URL", "http://pi-agent-gateway")
+
     system_prompt = build_system_prompt(task)
     initial_message = build_task_message(task, context)
 
-    async def _noop_handler(event: AgentEvent) -> None:
-        pass
+    agent_logger = AgentLogger(
+        job_id=job_id,
+        gateway_url=gateway_url,
+        model=model,
+        tool_names=[t["name"] for t in tools],
+    )
 
     agent = Agent(
         endpoint=endpoint,
@@ -70,13 +78,10 @@ async def run_agent(task: str, project_id: int, context: dict) -> None:
         model=model,
         tools=tools,
         system_prompt=system_prompt,
-        event_handler=_noop_handler,
+        event_handler=agent_logger.handle_event,
         gas_limit_input=gas_limit_input,
         gas_limit_output=gas_limit_output,
     )
-
-    job_id = os.getenv("JOB_ID", "")
-    gateway_url = os.getenv("GATEWAY_URL", "http://pi-agent-gateway")
 
     final_status = "completed"
     try:
