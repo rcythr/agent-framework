@@ -21,5 +21,17 @@ def get_provider() -> RepositoryProvider:
             return GitHubProvider(
                 token=os.getenv("GITHUB_TOKEN"),
             )
+        case "bitbucket":
+            from providers.bitbucket.provider import BitbucketProvider
+            return BitbucketProvider(
+                username=os.getenv("BITBUCKET_USERNAME", ""),
+                app_password=os.getenv("BITBUCKET_APP_PASSWORD", ""),
+            )
+        case "gitea":
+            from providers.gitea.provider import GiteaProvider
+            return GiteaProvider(
+                url=os.getenv("GITEA_URL", "https://gitea.com"),
+                token=os.getenv("GITEA_TOKEN"),
+            )
         case _:
             raise ValueError(f"Unknown provider: {provider_name!r}")

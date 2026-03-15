@@ -14,6 +14,39 @@ def test_get_provider_returns_gitlab_provider():
         assert isinstance(provider, GitLabProvider)
 
 
+def test_get_provider_returns_github_provider():
+    with patch.dict(os.environ, {"PROVIDER": "github", "GITHUB_TOKEN": "tok"}):
+        from importlib import reload
+        import providers.registry as reg
+        reload(reg)
+        from providers.github.provider import GitHubProvider
+        with patch("providers.github.provider.Github"):
+            provider = reg.get_provider()
+            assert isinstance(provider, GitHubProvider)
+
+
+def test_get_provider_returns_bitbucket_provider():
+    env = {"PROVIDER": "bitbucket", "BITBUCKET_USERNAME": "alice", "BITBUCKET_APP_PASSWORD": "pass"}
+    with patch.dict(os.environ, env):
+        from importlib import reload
+        import providers.registry as reg
+        reload(reg)
+        from providers.bitbucket.provider import BitbucketProvider
+        provider = reg.get_provider()
+        assert isinstance(provider, BitbucketProvider)
+
+
+def test_get_provider_returns_gitea_provider():
+    env = {"PROVIDER": "gitea", "GITEA_URL": "https://gitea.example.com", "GITEA_TOKEN": "tok"}
+    with patch.dict(os.environ, env):
+        from importlib import reload
+        import providers.registry as reg
+        reload(reg)
+        from providers.gitea.provider import GiteaProvider
+        provider = reg.get_provider()
+        assert isinstance(provider, GiteaProvider)
+
+
 def test_get_provider_raises_for_unknown():
     with patch.dict(os.environ, {"PROVIDER": "unknown_xyz"}):
         from providers.registry import get_provider
@@ -29,6 +62,46 @@ def test_get_auth_provider_returns_gitlab_auth_provider():
         from providers.gitlab.auth import GitLabAuthProvider
         provider = get_auth_provider()
         assert isinstance(provider, GitLabAuthProvider)
+
+
+def test_get_auth_provider_returns_github_auth_provider():
+    with patch.dict(os.environ, {"AUTH_PROVIDER": "github"}, clear=False):
+        from importlib import reload
+        import providers.auth_registry as reg
+        reload(reg)
+        from providers.github.auth import GitHubAuthProvider
+        provider = reg.get_auth_provider()
+        assert isinstance(provider, GitHubAuthProvider)
+
+
+def test_get_auth_provider_returns_bitbucket_auth_provider():
+    with patch.dict(os.environ, {"AUTH_PROVIDER": "bitbucket"}, clear=False):
+        from importlib import reload
+        import providers.auth_registry as reg
+        reload(reg)
+        from providers.bitbucket.auth import BitbucketAuthProvider
+        provider = reg.get_auth_provider()
+        assert isinstance(provider, BitbucketAuthProvider)
+
+
+def test_get_auth_provider_returns_gitea_auth_provider():
+    with patch.dict(os.environ, {"AUTH_PROVIDER": "gitea"}, clear=False):
+        from importlib import reload
+        import providers.auth_registry as reg
+        reload(reg)
+        from providers.gitea.auth import GiteaAuthProvider
+        provider = reg.get_auth_provider()
+        assert isinstance(provider, GiteaAuthProvider)
+
+
+def test_get_auth_provider_returns_oidc_auth_provider():
+    with patch.dict(os.environ, {"AUTH_PROVIDER": "oidc"}, clear=False):
+        from importlib import reload
+        import providers.auth_registry as reg
+        reload(reg)
+        from providers.auth_oidc import OIDCAuthProvider
+        provider = reg.get_auth_provider()
+        assert isinstance(provider, OIDCAuthProvider)
 
 
 def test_get_auth_provider_falls_back_to_provider_env():

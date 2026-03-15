@@ -23,6 +23,7 @@ spec:
           env:
             - name: PROVIDER
               value: "gitlab"
+            # ── GitLab ────────────────────────────────────────────────────────
             - name: GITLAB_URL
               value: "http://gitlab-webservice-default.gitlab.svc.cluster.local:8080"
             - name: GITLAB_TOKEN
@@ -35,6 +36,54 @@ spec:
                 secretKeyRef:
                   name: gitlab-creds
                   key: webhook-secret
+            # ── GitHub ────────────────────────────────────────────────────────
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-creds
+                  key: token
+                  optional: true
+            - name: GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: github-creds
+                  key: webhook-secret
+                  optional: true
+            # ── Bitbucket ─────────────────────────────────────────────────────
+            - name: BITBUCKET_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: bitbucket-creds
+                  key: username
+                  optional: true
+            - name: BITBUCKET_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bitbucket-creds
+                  key: app-password
+                  optional: true
+            - name: BITBUCKET_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bitbucket-creds
+                  key: webhook-secret
+                  optional: true
+            # ── Gitea ─────────────────────────────────────────────────────────
+            - name: GITEA_URL
+              value: "https://gitea.com"
+            - name: GITEA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gitea-creds
+                  key: token
+                  optional: true
+            - name: GITEA_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: gitea-creds
+                  key: webhook-secret
+                  optional: true
+            # ── Agent / Gas limits ────────────────────────────────────────────
             - name: PI_AGENT_IMAGE
               value: "localhost:5001/pi-agent-worker:latest"
             - name: PI_AGENT_NAMESPACE

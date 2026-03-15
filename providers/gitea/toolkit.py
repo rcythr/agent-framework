@@ -2,8 +2,8 @@ from worker.tools.toolkit_base import ProviderToolkit
 from providers.base import RepositoryProvider
 
 
-class GitHubToolkit(ProviderToolkit):
-    """GitHub implementation of ProviderToolkit."""
+class GiteaToolkit(ProviderToolkit):
+    """Gitea implementation of ProviderToolkit."""
 
     def __init__(self, provider: RepositoryProvider, project_id: int | str):
         self.provider = provider

@@ -12,5 +12,17 @@ def get_auth_provider() -> AuthProvider:
         case "gitlab":
             from providers.gitlab.auth import GitLabAuthProvider
             return GitLabAuthProvider()
+        case "github":
+            from providers.github.auth import GitHubAuthProvider
+            return GitHubAuthProvider()
+        case "bitbucket":
+            from providers.bitbucket.auth import BitbucketAuthProvider
+            return BitbucketAuthProvider()
+        case "gitea":
+            from providers.gitea.auth import GiteaAuthProvider
+            return GiteaAuthProvider()
+        case "oidc":
+            from providers.auth_oidc import OIDCAuthProvider
+            return OIDCAuthProvider()
         case _:
             raise ValueError(f"Unknown auth provider: {auth_provider_name!r}")
