@@ -136,10 +136,11 @@ phalanx/
 │       ├── values.yaml
 │       └── templates/
 ├── docs/
-│   ├── ARCHITECTURE.md      # Deep-dive technical architecture
-│   ├── local-development.md
-│   ├── walkthrough.md       # End-to-end usage walkthrough
-│   └── gitlab-oauth-setup.md
+│   ├── ARCHITECTURE.md         # Architecture overview (links to sub-documents)
+│   ├── architecture/           # Detailed architecture sub-documents
+│   ├── walkthrough.md          # End-to-end usage walkthrough
+│   ├── gitlab-oauth-setup.md
+│   └── providers/              # Per-provider setup guides
 ├── Dockerfile.gateway
 ├── Dockerfile.worker
 └── requirements.txt
@@ -150,6 +151,13 @@ phalanx/
 ## Walkthrough
 
 For a step-by-step walkthrough covering local development, per-project configuration, interactive sessions, gas top-up, custom CA certificates, and production Helm deployment, see [`docs/walkthrough.md`](docs/walkthrough.md).
+
+For provider-specific setup guides (credentials, OAuth apps, webhook configuration) see [`docs/providers/`](docs/providers/README.md):
+
+- [GitLab](docs/providers/gitlab.md) — GitLab.com and self-hosted CE/EE
+- [GitHub](docs/providers/github.md) — GitHub.com and GitHub Enterprise
+- [Bitbucket](docs/providers/bitbucket.md) — Bitbucket Cloud (app passwords + Atlassian OIDC)
+- [Gitea](docs/providers/gitea.md) — self-hosted Gitea instances
 
 ---
 

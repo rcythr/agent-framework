@@ -50,6 +50,22 @@ When it finishes you'll see something like:
   Gateway:  http://phalanx.localhost:8080
 ```
 
+After a successful run a `.env.test` file is written to the repository root:
+
+```
+GITLAB_URL=http://gitlab.localhost:8080
+GITLAB_TOKEN=<project access token>
+GITLAB_WEBHOOK_SECRET=<webhook secret>
+GITLAB_PROJECT_ID=<project numeric id>
+GITLAB_PROJECT_PATH=pi-agent-test/test-repo
+```
+
+This file is gitignored. E2E tests source it automatically. If you need to re-register the test project and webhook without recreating the whole cluster:
+
+```bash
+./scripts/reseed-gitlab.sh
+```
+
 ### 1.2 Open the dashboard
 
 Navigate to `http://phalanx.localhost:8080` in your browser. Because this is a local dev cluster with no OAuth2 proxy, you'll land directly on the dashboard.
@@ -176,14 +192,38 @@ The Helm chart automatically creates a `phalanx-ca-certs` ConfigMap, mounts it i
 
 For production environments, use the provided Helm chart rather than the raw K8s manifests.
 
-### 6.1 Prerequisites
+> This walkthrough uses GitLab as the provider. For GitHub, Bitbucket, or Gitea see the [provider-specific setup guides](providers/README.md).
+
+### 6.1 Configure a GitLab OAuth application
+
+Phalanx uses oauth2-proxy as an OIDC/OAuth2 gateway in front of the dashboard. This does two jobs at once:
+
+1. **Authentication** — only GitLab users who are members of your configured group can reach the dashboard.
+2. **Token forwarding** — oauth2-proxy is configured with `--pass-access-token=true`, which attaches the authenticated user's GitLab OAuth token as an `X-Forwarded-Access-Token` header on every request it proxies. The gateway reads this header to make **user-scoped** provider API calls — project search and webhook registration — so the user sees only the projects they have access to in GitLab.
+
+> Without `--pass-access-token=true` (or without the `api` scope on the OAuth app), project search returns nothing and webhook registration fails silently.
+
+**Create the OAuth application in GitLab:**
+
+1. Go to **User Settings → Applications → Add new application** (or a Group application under **Group → Settings → Applications**).
+2. Set:
+   - **Name:** `phalanx`
+   - **Redirect URI:** `https://phalanx.example.com/oauth2/callback`
+   - **Scopes:** `api`, `read_user`, `openid`  ← all three are required
+3. Save, then copy the **Application ID** and **Secret**.
+
+For local KIND development the redirect URI is `http://phalanx.localhost:8080/oauth2/callback`.
+
+See `docs/gitlab-oauth-setup.md` for the full setup guide.
+
+### 6.2 Prerequisites
 
 - A running Kubernetes cluster (EKS, GKE, AKS, or self-managed)
 - An nginx ingress controller installed
-- A GitLab OAuth2 application configured (see `docs/gitlab-oauth-setup.md`)
+- The GitLab OAuth application from 6.1
 - The Phalanx gateway and worker images pushed to your container registry
 
-### 6.2 Install
+### 6.3 Install
 
 ```bash
 helm install phalanx ./helm/phalanx \
@@ -210,7 +250,7 @@ helm install phalanx ./helm/phalanx \
   --set worker.image.repository=registry.example.com/phalanx-worker
 ```
 
-### 6.3 Configure your GitLab project
+### 6.4 Configure your GitLab project
 
 In any GitLab project you want Phalanx to watch:
 
@@ -222,7 +262,7 @@ In any GitLab project you want Phalanx to watch:
 
 Then add `.agents/config.yaml` to the project root (see Part 2 above) with at least one entry in `allowed_users`.
 
-### 6.4 Verify
+### 6.5 Verify
 
 ```bash
 kubectl get pods -n pi-agents

@@ -1,6 +1,6 @@
 # AGENTS.md — Phalanx Codebase Guide for AI Agents
 
-This file is written for AI agents (Claude, GPT-4, Gemini, etc.) that are working inside this repository. Read it before making changes.
+This file is written for AI agents working inside this repository. Read it before making changes. Every claim below links to the exact file and line where you can verify it.
 
 ---
 
@@ -8,9 +8,11 @@ This file is written for AI agents (Claude, GPT-4, Gemini, etc.) that are workin
 
 Phalanx is an autonomous agent system for Git repositories. It listens to repository events (pushes, merge requests, comments) and spawns AI agents as ephemeral Kubernetes Jobs to review code, implement changes, and post inline feedback. A persistent gateway coordinates everything; a React SPA dashboard lets humans watch and intervene in real time.
 
+Full narrative: [`docs/ARCHITECTURE.md:1-50`](docs/ARCHITECTURE.md)
+
 ---
 
-## Repository layout (what lives where)
+## Repository layout
 
 ```
 phalanx/
@@ -20,114 +22,188 @@ phalanx/
 ├── shared/             # Pydantic models shared between gateway and worker
 ├── dashboard/          # Single-file React SPA (index.html — no build step)
 ├── global-config/      # Default agent config, global skills and tools
-├── k8s/                # Raw Kubernetes manifests (used for local dev)
+├── k8s/                # Raw Kubernetes manifests (local dev)
 ├── helm/               # Helm chart for production deployment
 ├── kind/               # KIND cluster config for local development
 ├── scripts/            # Shell scripts for local dev (cluster-up, seed, etc.)
-├── harness/            # Multi-phase test harness CLI
 ├── tests/              # Pytest test suite (unit + E2E)
 └── docs/               # Architecture and usage documentation
 ```
 
+Detailed layout with annotations: [`docs/ARCHITECTURE.md:91-128`](docs/ARCHITECTURE.md)
+
 ---
 
-## Core abstractions
+## Source files — where everything lives
 
-### RepositoryProvider (`providers/base.py`)
+### Gateway (`gateway/`)
 
-The single integration boundary between Phalanx and any Git hosting platform. All gateway and worker code interacts with `RepositoryProvider` — never with a platform SDK directly.
+| File | Lines | Purpose |
+|---|---|---|
+| `gateway/main.py` | 1–680 | FastAPI app — all HTTP endpoints, SSE streams, lifespan startup |
+| `gateway/db.py` | 1–453 | SQLite persistence via aiosqlite; `Database` class at line 11 |
+| `gateway/kube_client.py` | 1–272 | Kubernetes Job spawner; `KubeClient` class at line 11 |
+| `gateway/config_loader.py` | 1–233 | Fetches + merges per-project config; `ConfigLoader` class at line 58 |
+| `gateway/event_mapper.py` | 1–53 | Maps provider events → `TaskSpec` |
+| `gateway/session_broker.py` | 1–66 | In-memory message queues for interactive sessions; `SessionBroker` at line 5 |
 
-Key methods:
-- `get_file(project_id, path, ref)` — fetch file contents at a ref
-- `commit_file(project_id, path, content, branch, message)` — write a file
-- `create_mr(...)` / `post_mr_comment(...)` / `post_inline_comment(...)`
-- `verify_webhook(payload, headers)` / `parse_webhook_event(payload, headers)`
+Key gateway endpoint groups in `gateway/main.py`:
+- Webhook ingestion: lines 99–160
+- Job API (`/agents/...`): lines 178–329
+- Session API (`/sessions/...`): lines 330–555
+- Internal cluster endpoints (`/internal/...`): lines 194–577
+- Project proxy endpoints (`/projects/...`): lines 578–680
+- Dashboard SPA: line 678
 
-Adding a new provider = create `providers/{name}/provider.py` implementing this ABC, plus `webhook.py`, `toolkit.py`, `auth.py`. Register in `providers/registry.py` and `providers/auth_registry.py`.
+### Worker (`worker/`)
 
-### ProviderToolkit (`worker/tools/toolkit_base.py`)
+| File | Lines | Purpose |
+|---|---|---|
+| `worker/main.py` | 1–21 | K8s Job entrypoint; routes to job or session mode |
+| `worker/agent.py` | 1–234 | `AgentEvent` dataclass at line 10; `Agent` class at line 19 |
+| `worker/agent_runner.py` | 1–229 | `build_system_prompt` at line 11; `run_agent` at line 52; `run_session` at line 170 |
+| `worker/agent_logger.py` | 1–145 | `AgentLogger` class at line 15; streams events to gateway |
+| `worker/tools/toolkit_base.py` | 1–17 | `ProviderToolkit` ABC |
+| `worker/tools/toolkit_factory.py` | 1–15 | Factory: reads `PROVIDER` env var, returns correct toolkit |
 
-The set of tools exposed to the agent's LLM loop. Each tool is a Python async function; the toolkit maps function names to callables. The agent calls tools by name in its loop.
+### Providers (`providers/`)
 
-### Agent (`worker/agent.py`)
+| File | Lines | Purpose |
+|---|---|---|
+| `providers/base.py` | 1–161 | Shared event models (lines 6–63); `RepositoryProvider` ABC at line 65 |
+| `providers/registry.py` | 1–37 | `get_provider()` factory |
+| `providers/auth_base.py` | 1–27 | `OAuthProxyConfig`, `UserIdentity`, `AuthProvider` ABC |
+| `providers/auth_registry.py` | 1–28 | `get_auth_provider()` factory |
+| `providers/gitlab/` | — | Full GitLab implementation (`provider.py`, `webhook.py`, `toolkit.py`, `auth.py`) |
+| `providers/github/` | — | GitHub implementation |
+| `providers/bitbucket/` | — | Bitbucket implementation |
+| `providers/gitea/` | — | Gitea implementation |
 
-The core LLM interaction loop. Sends messages to an OpenAI-compatible API, dispatches tool calls, tracks gas (token) usage, and handles interrupts from the session broker. Does not know about Kubernetes, providers, or logging — those concerns live in `agent_runner.py`.
+### Shared models (`shared/models.py`)
 
-### Gateway (`gateway/main.py`)
+| Class | Line | Purpose |
+|---|---|---|
+| `ActivationRecord` | 6 | Webhook registration record |
+| `TaskSpec` | 15 | Provider-agnostic task description passed to worker |
+| `LogEvent` | 21 | One structured event in the execution trace |
+| `JobRecord` | 41 | Persisted job state (status, gas limits/usage, timestamps) |
+| `SkillDef` / `ToolDef` | 58 / 64 | Skill and tool definitions |
+| `ProjectConfig` | 70 | Parsed `.agents/config.yaml` |
+| `AgentConfig` | 82 | Fully resolved config produced by config loader |
+| `SessionContext` | 93 | User-supplied session parameters |
+| `SessionMessage` | 106 | One message in the conversation thread |
+| `SessionRecord` | 122 | Persisted interactive session state |
 
-FastAPI application. Key responsibilities:
-- Receive webhooks from providers and spawn K8s Jobs
-- Persist jobs, log events, and sessions to SQLite (`gateway/db.py`)
-- Serve SSE streams for the dashboard
-- Handle interactive session messages via the in-memory broker (`gateway/session_broker.py`)
-- Provide REST endpoints for the dashboard (`/api/...`)
+---
+
+## Documentation — what to read for each topic
+
+### Architecture
+
+| Topic | File | Lines |
+|---|---|---|
+| System overview, diagram, design principles | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 1–154 |
+| Shared Pydantic models + project config schema | [`docs/architecture/data-model.md`](docs/architecture/data-model.md) | 1–221 |
+| `RepositoryProvider` ABC, event models, registry, toolkit | [`docs/architecture/providers.md`](docs/architecture/providers.md) | 1–255 |
+| Gateway internals (config loader → API endpoints) | [`docs/architecture/gateway.md`](docs/architecture/gateway.md) | 1–263 |
+| Worker internals (toolkit → agent loop → runner) | [`docs/architecture/worker.md`](docs/architecture/worker.md) | 1–303 |
+| Gas / token budget system | [`docs/architecture/gas-system.md`](docs/architecture/gas-system.md) | 1–90 |
+| Dashboard (views, session UI, log panel) | [`docs/architecture/dashboard.md`](docs/architecture/dashboard.md) | 1–70 |
+| Docker images + K8s manifests + webhook setup | [`docs/architecture/deployment.md`](docs/architecture/deployment.md) | 1–179 |
+| End-to-end flow + interactive session flow | [`docs/architecture/flows.md`](docs/architecture/flows.md) | 1–99 |
+| `AuthProvider` abstraction + oauth2-proxy config | [`docs/architecture/authentication.md`](docs/architecture/authentication.md) | 1–119 |
+| Security considerations table | [`docs/architecture/security.md`](docs/architecture/security.md) | 1–29 |
+| How to extend: new providers, tools, event types | [`docs/architecture/extending.md`](docs/architecture/extending.md) | 1–34 |
+
+### Usage and deployment
+
+| Topic | File | Lines |
+|---|---|---|
+| End-to-end usage walkthrough (local dev → Helm prod) | [`docs/walkthrough.md`](docs/walkthrough.md) | 1–302 |
+| Provider comparison table + choosing a provider | [`docs/providers/README.md`](docs/providers/README.md) | 1–26 |
+| GitLab setup (token, OAuth app, webhooks, Helm) | [`docs/providers/gitlab.md`](docs/providers/gitlab.md) | 1–170 |
+| GitHub setup (PAT, OAuth app, webhooks, Helm) | [`docs/providers/github.md`](docs/providers/github.md) | 1–173 |
+| Bitbucket setup (app password, Atlassian OIDC, Helm) | [`docs/providers/bitbucket.md`](docs/providers/bitbucket.md) | 1–172 |
+| Gitea setup (API token, webhooks, custom CA, Helm) | [`docs/providers/gitea.md`](docs/providers/gitea.md) | 1–184 |
+| GitLab OAuth application setup detail | [`docs/gitlab-oauth-setup.md`](docs/gitlab-oauth-setup.md) | 1–52 |
+
+### Helm chart
+
+| File | Lines | Purpose |
+|---|---|---|
+| `helm/phalanx/Chart.yaml` | 1–17 | Chart metadata |
+| `helm/phalanx/values.yaml` | 1–110 | All configurable values with comments |
+| `helm/phalanx/templates/gateway-deployment.yaml` | — | Gateway Deployment + Service |
+| `helm/phalanx/templates/secrets.yaml` | — | Provider credential Secrets |
+| `helm/phalanx/templates/configmap.yaml` | — | Gateway config + custom CA cert ConfigMap |
+| `helm/phalanx/templates/ingress.yaml` | — | Bypass + main Ingress |
+| `helm/phalanx/templates/oauth2-proxy.yaml` | — | oauth2-proxy Deployment + Service |
+| `helm/phalanx/templates/rbac.yaml` | — | ServiceAccounts, Role, RoleBinding |
+| `helm/phalanx/templates/pvc.yaml` | — | Gateway data PersistentVolumeClaim |
 
 ---
 
 ## Data flow
 
 ```
-Provider webhook → gateway/main.py → event_mapper.py → TaskSpec
-    → kube_client.py spawns K8s Job
-        → worker/main.py → agent_runner.py → agent.py (LLM loop)
-            → tools → provider toolkit → provider API
-            → agent_logger.py → POST /internal/log → gateway DB
-    → dashboard SSE stream ← gateway/main.py
+Provider webhook
+  → gateway/main.py:99  (_process_webhook)
+  → gateway/event_mapper.py:1  (map_event_to_task → TaskSpec)
+  → gateway/config_loader.py:58  (ConfigLoader.load → AgentConfig)
+  → gateway/kube_client.py:11  (KubeClient.spawn_agent_job)
+      → worker/main.py:1  (entrypoint)
+      → worker/agent_runner.py:52  (run_agent) or :170 (run_session)
+          → worker/agent.py:19  (Agent.run — LLM loop)
+              → worker/tools/toolkit_factory.py:1  (get_toolkit)
+              → providers/{name}/toolkit.py  (tool execution)
+          → worker/agent_logger.py:15  (AgentLogger → POST /internal/log)
+              → gateway/main.py:209  (post_log → db + SSE fan-out)
 ```
 
 ---
 
-## Environment variables (workers inherit these from K8s Job spec)
+## Environment variables (workers inherit from K8s Job spec)
 
 | Variable | Purpose |
 |---|---|
 | `PROVIDER` | Which provider to load (`gitlab`, `github`, `bitbucket`, `gitea`) |
 | `GATEWAY_URL` | Internal URL of the gateway for posting log events |
 | `JOB_ID` | Identifier of this job (for logging) |
-| `SESSION_ID` | If set, run in session mode rather than job mode |
+| `SESSION_ID` | If set, run in session mode (`worker/agent_runner.py:170`) |
 | `LLM_API_BASE` | OpenAI-compatible API base URL |
 | `LLM_API_KEY` | API key for the LLM |
 | `LLM_MODEL` | Model name to use |
 | `GAS_LIMIT_INPUT` | Max input tokens for this run |
 | `GAS_LIMIT_OUTPUT` | Max output tokens for this run |
-| `REQUESTS_CA_BUNDLE` | Path to custom CA bundle (set automatically when `customCACerts` is configured) |
-| `SSL_CERT_FILE` | Same as above — for libraries that use this variable |
+| `REQUESTS_CA_BUNDLE` | Path to custom CA bundle (set by `scripts/docker-entrypoint.sh` when cert is mounted) |
+| `SSL_CERT_FILE` | Same — for libraries that read this variable instead |
 
----
-
-## Shared models (`shared/models.py`)
-
-Import these rather than defining new ones when working across gateway/worker:
-
-- `JobRecord` — persisted job state (status, gas limits/usage, timestamps)
-- `LogEvent` — one structured event in the execution trace (LLM query, tool call, result, error, etc.)
-- `SessionRecord`, `SessionMessage` — interactive session persistence
-- `ProjectConfig`, `AgentConfig` — merged configuration for a run
-- `TaskSpec` — provider-agnostic description of a task to run
-- `ActivationRecord`, `WebhookRegistration`
+Full K8s Job env var injection: `gateway/kube_client.py:11`
 
 ---
 
 ## Per-project configuration (`.agents/config.yaml`)
 
-Any repository that Phalanx manages can override agent behaviour by placing `.agents/config.yaml` at its root. The gateway fetches this file at the exact commit SHA that triggered the event. Fields:
+The gateway fetches this at the exact commit SHA that triggered the event (`gateway/config_loader.py:58`). Full schema: [`docs/architecture/data-model.md:155-221`](docs/architecture/data-model.md).
 
 ```yaml
-allowed_users: [alice, bob]       # who can trigger automatic dispatch
-skills: [python-testing]          # skill IDs to load
-tools: [notify-slack]             # tool IDs to load
+allowed_users: [alice, bob]
+skills: [python-testing]
+tools: [notify-slack]
 gas_limit_input: 120000
 gas_limit_output: 30000
-prompt_mode: append               # or "replace"
+prompt_mode: append        # or "override"
 prompt: "Project-specific context..."
-dockerfile: Dockerfile            # optional custom worker image
+dockerfile: Dockerfile     # optional custom worker image layer
 ```
 
 ---
 
 ## Gas system
 
-Token budgets are tracked per-job/session. `agent.py` increments `gas_used_input` and `gas_used_output` after every LLM call. When either limit is reached the agent pauses, serialises state, and returns a `PAUSED` status. The gateway stores the full context; a top-up via the dashboard API resumes the agent from the exact same point.
+Token budgets are tracked per-job/session. `worker/agent.py:19` increments `_gas_used_input` and `_gas_used_output` after every LLM call. When either limit is reached the agent emits `out_of_gas`, suspends on an `asyncio.Event`, and waits for `add_gas()` to be called. The gateway stores full context; a top-up via `POST /agents/{id}/gas` (line 296) or `POST /sessions/{id}/gas` (line 467) resumes the agent.
+
+Full flow: [`docs/architecture/gas-system.md:22-53`](docs/architecture/gas-system.md)
 
 ---
 
@@ -142,40 +218,76 @@ source .env.test
 pytest tests/e2e/
 ```
 
-Test files are in `tests/`. Most unit tests mock the provider and K8s client. E2E tests use the seeded GitLab instance created by `scripts/cluster-up.sh`.
+Unit tests mock `RepositoryProvider` and `KubeClient`. E2E tests use the seeded GitLab instance from `scripts/cluster-up.sh`.
 
 ---
 
 ## Local development
 
 ```bash
-./scripts/cluster-up.sh    # ~5–8 min first run; creates cluster, GitLab, registry
-./scripts/load-images.sh   # < 1 min; rebuild images after code changes
+./scripts/cluster-up.sh    # ~5–8 min first run
+./scripts/load-images.sh   # rebuild images after code changes
 ./scripts/cluster-down.sh  # teardown
 ```
 
-After `cluster-up.sh`, the dashboard is at `http://phalanx.localhost:8080` and GitLab is at `http://gitlab.localhost:8080` (root / changeme-local-only).
+Full walkthrough: [`docs/walkthrough.md:22-90`](docs/walkthrough.md)
 
 ---
 
-## Common patterns to follow
+## Common patterns
 
-**Adding a new API endpoint** — add it to `gateway/main.py`. Use the existing SQLite helpers from `gateway/db.py` for persistence.
+**Adding a new API endpoint** — `gateway/main.py` (add route); `gateway/db.py:11` (Database class for persistence).
 
-**Adding a new agent tool** — add an async function to the relevant toolkit in `providers/{name}/toolkit.py` and register it in `worker/tools/toolkit_factory.py`.
+**Adding a new agent tool** — `providers/{name}/toolkit.py` (add method + register in `get_tools()`); `worker/tools/toolkit_factory.py:1` (factory stays unchanged unless adding a new provider).
 
-**Adding a new provider** — implement all four files in `providers/{name}/` following the ABC contracts in `providers/base.py` and `worker/tools/toolkit_base.py`. Register in both registry files.
+**Adding a new provider** — implement `providers/{name}/provider.py`, `webhook.py`, `toolkit.py`, `auth.py` following `providers/base.py:65` (`RepositoryProvider` ABC) and `providers/auth_base.py:1` (`AuthProvider` ABC). Register in `providers/registry.py:1` and `providers/auth_registry.py:1`. See [`docs/architecture/extending.md`](docs/architecture/extending.md) and [`docs/architecture/providers.md`](docs/architecture/providers.md).
 
-**Modifying the dashboard** — all frontend code lives in `dashboard/index.html`. It uses React 18 loaded from CDN with Babel transpilation at runtime. No build step.
+**Adding a new Helm value** — `helm/phalanx/values.yaml` (add with default); reference in relevant template under `helm/phalanx/templates/`.
 
-**Adding a new Helm value** — add it to `helm/phalanx/values.yaml` with a sensible default, then reference it in the appropriate template in `helm/phalanx/templates/`.
+**Modifying the dashboard** — `dashboard/index.html` only. React 18 from CDN, Babel transpilation at runtime. No build step.
+
+**Modifying shared models** — `shared/models.py`; check every serialisation point in both `gateway/` and `worker/` afterwards.
+
+---
+
+## Keeping documentation up to date
+
+When you make changes to this codebase, update the documentation as part of the same commit. Do not leave docs describing the old behaviour.
+
+**This file (AGENTS.md)**
+- If you add, move, or delete a source file, update the source files table and the repository layout.
+- If a class or function moves to a different line, update the `file:line` reference.
+- If you add a new pattern, abstraction, or hard rule, add it to the relevant section.
+
+**`docs/ARCHITECTURE.md` and `docs/architecture/`**
+- If you change how a component works, update its sub-document (`gateway.md`, `worker.md`, `providers.md`, etc.).
+- If you add a new component or remove one, update the overview table in `docs/ARCHITECTURE.md` and the project structure diagram.
+- If you change the API surface (`gateway/main.py` endpoints), update `docs/architecture/gateway.md`.
+- If you change the data model (`shared/models.py`), update `docs/architecture/data-model.md`.
+- If you change how authentication works, update `docs/architecture/authentication.md`.
+- If you add or change a security property, update `docs/architecture/security.md`.
+
+**`docs/providers/`**
+- If you change credential requirements, OAuth scopes, webhook events, or signature behaviour for a provider, update the relevant file in `docs/providers/`.
+
+**`docs/walkthrough.md`**
+- If you change the local dev setup, Helm install steps, or any user-facing workflow, update the walkthrough.
+
+**`helm/phalanx/values.yaml`**
+- Every new configurable value must have a comment explaining what it does. The Helm section of `docs/walkthrough.md` should be updated if the install command changes.
+
+**General rules**
+- Line references in this file must stay accurate. If a refactor shifts a function to a different line, fix the reference.
+- Do not add a doc section for something that does not yet exist in code.
+- Do not leave `TODO` or `planned` language in documentation for features that are already implemented.
 
 ---
 
 ## What NOT to do
 
-- Do not import provider-specific SDKs (`python-gitlab`, `PyGithub`, etc.) in `gateway/` or `worker/` code — only in `providers/{name}/`.
-- Do not log secrets. The logger (`worker/agent_logger.py`) filters environment variables, but be careful with raw exception messages that might include headers or tokens.
-- Do not add state to worker pods. All persistent state lives in the gateway's SQLite database.
-- Do not bypass the `RepositoryProvider` ABC — even in tests, mock the ABC not the underlying SDK.
-- Do not modify `shared/models.py` Pydantic model field names without updating every serialisation point in both gateway and worker.
+- Do not import provider SDKs (`python-gitlab`, `PyGithub`, etc.) outside `providers/{name}/` — the gateway and worker must stay provider-agnostic.
+- Do not bypass the `RepositoryProvider` ABC (`providers/base.py:65`) — mock the ABC in tests, not the underlying SDK.
+- Do not add state to worker pods — all persistent state lives in `gateway/db.py:11`.
+- Do not log secrets — `worker/agent_logger.py:15` filters env vars but raw exception messages can leak headers or tokens.
+- Do not modify `shared/models.py` field names without updating every serialisation point in both `gateway/` and `worker/`.
+- Do not push to a branch other than `claude/docs-helm-certs-0Xoy1` without explicit permission.
