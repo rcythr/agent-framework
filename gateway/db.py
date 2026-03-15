@@ -2,7 +2,7 @@ import os
 import json
 import aiosqlite
 from datetime import datetime
-from shared.models import JobRecord
+from shared.models import JobRecord, LogEvent
 
 
 DB_PATH = os.getenv("DB_PATH", "gateway.db")
@@ -40,6 +40,16 @@ class Database:
                 gas_used_input INTEGER NOT NULL DEFAULT 0,
                 gas_used_output INTEGER NOT NULL DEFAULT 0,
                 gas_topups TEXT NOT NULL DEFAULT '[]'
+            )
+        """)
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS log_events (
+                job_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                timestamp TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                PRIMARY KEY (job_id, sequence)
             )
         """)
         await self._db.commit()
@@ -116,6 +126,31 @@ class Database:
         return [_row_to_job(r) for r in rows]
 
 
+    async def append_log_event(self, event: LogEvent) -> None:
+        await self._db.execute(
+            """
+            INSERT INTO log_events (job_id, sequence, timestamp, event_type, payload)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                event.job_id,
+                event.sequence,
+                event.timestamp.isoformat(),
+                event.event_type,
+                json.dumps(event.payload),
+            ),
+        )
+        await self._db.commit()
+
+    async def get_log_events(self, job_id: str) -> list[LogEvent]:
+        cursor = await self._db.execute(
+            "SELECT * FROM log_events WHERE job_id = ? ORDER BY sequence ASC",
+            (job_id,),
+        )
+        rows = await cursor.fetchall()
+        return [_row_to_log_event(r) for r in rows]
+
+
 def _row_to_job(row: aiosqlite.Row) -> JobRecord:
     return JobRecord(
         id=row["id"],
@@ -131,4 +166,14 @@ def _row_to_job(row: aiosqlite.Row) -> JobRecord:
         gas_used_input=row["gas_used_input"],
         gas_used_output=row["gas_used_output"],
         gas_topups=json.loads(row["gas_topups"]),
+    )
+
+
+def _row_to_log_event(row: aiosqlite.Row) -> LogEvent:
+    return LogEvent(
+        job_id=row["job_id"],
+        sequence=row["sequence"],
+        timestamp=datetime.fromisoformat(row["timestamp"]),
+        event_type=row["event_type"],
+        payload=json.loads(row["payload"]),
     )

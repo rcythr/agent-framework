@@ -1,16 +1,19 @@
+import asyncio
 import os
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request, Response, HTTPException
 from contextlib import asynccontextmanager
+from sse_starlette.sse import EventSourceResponse
 
 from gateway.db import Database
 from gateway.event_mapper import map_event_to_task
 from gateway.kube_client import KubeClient
 from providers.registry import get_provider
 from providers.auth_registry import get_auth_provider
-from shared.models import AgentConfig, JobRecord, SkillDef, ToolDef, TaskSpec
+from shared.models import AgentConfig, JobRecord, SkillDef, ToolDef, TaskSpec, LogEvent
 
 WEBHOOK_SECRET = os.getenv("GITLAB_WEBHOOK_SECRET", "dev-webhook-secret")
 
@@ -18,6 +21,9 @@ _db = Database()
 _kube: KubeClient | None = None
 _provider = None
 _auth_provider = None
+_subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
+
+_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "out_of_gas"}
 
 
 @asynccontextmanager
@@ -134,7 +140,54 @@ async def update_job_status(job_id: str, body: dict):
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
     finished_at = datetime.now(timezone.utc)
     await _db.update_job_status(job_id, status, finished_at=finished_at)
+    if status in _TERMINAL_STATUSES:
+        for q in _subscribers.pop(job_id, []):
+            await q.put(None)
     return {"job_id": job_id, "status": status}
+
+
+@app.post("/internal/log")
+async def post_log(event: LogEvent):
+    await _db.append_log_event(event)
+    for q in list(_subscribers.get(event.job_id, [])):
+        await q.put(event)
+    return Response(status_code=200)
+
+
+@app.get("/agents/{job_id}/logs")
+async def get_logs(job_id: str):
+    events = await _db.get_log_events(job_id)
+    return [e.model_dump(mode="json") for e in events]
+
+
+@app.get("/agents/{job_id}/logs/stream")
+async def stream_logs(job_id: str, request: Request):
+    queue: asyncio.Queue = asyncio.Queue()
+    _subscribers[job_id].append(queue)
+
+    async def event_generator():
+        try:
+            for event in await _db.get_log_events(job_id):
+                yield {"data": event.model_dump_json()}
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=1.0)
+                    if event is None:
+                        break
+                    yield {"data": event.model_dump_json()}
+                except asyncio.TimeoutError:
+                    if await request.is_disconnected():
+                        break
+                    yield {"data": ""}
+        finally:
+            if queue in _subscribers.get(job_id, []):
+                _subscribers[job_id].remove(queue)
+            if not _subscribers.get(job_id):
+                _subscribers.pop(job_id, None)
+
+    return EventSourceResponse(event_generator())
 
 
 @app.get("/internal/oauth2-proxy-config")
