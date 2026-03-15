@@ -176,6 +176,8 @@ The Helm chart automatically creates a `phalanx-ca-certs` ConfigMap, mounts it i
 
 For production environments, use the provided Helm chart rather than the raw K8s manifests.
 
+> This walkthrough uses GitLab as the provider. For GitHub, Bitbucket, or Gitea see the [provider-specific setup guides](providers/README.md).
+
 ### 6.1 Configure a GitLab OAuth application
 
 Phalanx uses oauth2-proxy as an OIDC/OAuth2 gateway in front of the dashboard. This does two jobs at once:
