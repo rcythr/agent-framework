@@ -13,11 +13,17 @@ from gateway.config_loader import ConfigLoader
 from gateway.db import Database
 from gateway.event_mapper import map_event_to_task
 from gateway.kube_client import KubeClient
+from gateway.session_broker import SessionBroker
 from providers.registry import get_provider
 from providers.auth_registry import get_auth_provider
-from shared.models import AgentConfig, JobRecord, SkillDef, ToolDef, TaskSpec, LogEvent
+from shared.models import (
+    AgentConfig, JobRecord, SkillDef, ToolDef, TaskSpec, LogEvent,
+    SessionRecord, SessionMessage, SessionContext,
+)
 
 WEBHOOK_SECRET = os.getenv("GITLAB_WEBHOOK_SECRET", "dev-webhook-secret")
+DEFAULT_SESSION_INPUT_GAS_LIMIT = int(os.getenv("DEFAULT_SESSION_INPUT_GAS_LIMIT", "160000"))
+DEFAULT_SESSION_OUTPUT_GAS_LIMIT = int(os.getenv("DEFAULT_SESSION_OUTPUT_GAS_LIMIT", "40000"))
 
 _db = Database()
 _kube: KubeClient | None = None
@@ -25,8 +31,11 @@ _provider = None
 _auth_provider = None
 _config_loader: ConfigLoader | None = None
 _subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
+_session_broker = SessionBroker()
+_session_subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
 
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "out_of_gas"}
+_SESSION_TERMINAL_STATUSES = {"complete", "failed", "cancelled", "out_of_gas"}
 _gas_waiters: dict[str, list[asyncio.Queue]] = defaultdict(list)
 
 
@@ -171,6 +180,10 @@ async def post_log(event: LogEvent):
     await _db.append_log_event(event)
     for q in list(_subscribers.get(event.job_id, [])):
         await q.put(event)
+    # Also notify session SSE subscribers (session workers post with job_id=session_id)
+    session_data = {"type": "log_event", **event.model_dump(mode="json")}
+    for q in list(_session_subscribers.get(event.job_id, [])):
+        await q.put(session_data)
     return Response(status_code=200)
 
 
@@ -279,6 +292,289 @@ async def internal_add_gas(job_id: str, body: dict):
     for q in list(_gas_waiters.get(job_id, [])):
         await q.put(body)
     return {"job_id": job_id}
+
+
+# ── Session endpoints ────────────────────────────────────────────────────────
+
+@app.post("/sessions")
+async def create_session(body: dict, request: Request):
+    identity = _auth_provider.extract_user(dict(request.headers))
+    owner = identity.username or "anonymous"
+    context = SessionContext(**body)
+    session_id = f"session-{uuid.uuid4().hex[:12]}"
+    session = SessionRecord(
+        id=session_id,
+        owner=owner,
+        project_id=context.project_id,
+        project_path=context.project_path,
+        branch=context.branch,
+        mr_iid=context.mr_iid,
+        status="configuring",
+        context=context,
+        created_at=datetime.now(timezone.utc),
+        gas_limit_input=context.gas_limit_input,
+        gas_limit_output=context.gas_limit_output,
+    )
+    await _db.create_session(session)
+    _kube.spawn_session_job(session)
+    await _session_broker.register(session_id)
+    await _db.update_session_status(session_id, "running")
+    session = await _db.get_session(session_id)
+    return session.model_dump(mode="json")
+
+
+@app.get("/sessions")
+async def list_sessions(request: Request, status: str | None = None):
+    identity = _auth_provider.extract_user(dict(request.headers))
+    owner = identity.username or "anonymous"
+    status_filter = [status] if status else None
+    sessions = await _db.list_sessions(owner=owner, status=status_filter)
+    return [s.model_dump(mode="json") for s in sessions]
+
+
+@app.get("/sessions/{session_id}")
+async def get_session(session_id: str, request: Request):
+    try:
+        session = await _db.get_session(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    identity = _auth_provider.extract_user(dict(request.headers))
+    owner = identity.username or "anonymous"
+    if session.owner != owner and owner != "anonymous":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return session.model_dump(mode="json")
+
+
+@app.get("/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str):
+    try:
+        await _db.get_session(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    messages = await _db.get_session_messages(session_id)
+    return [m.model_dump(mode="json") for m in messages]
+
+
+@app.post("/sessions/{session_id}/messages")
+async def post_session_message(session_id: str, body: dict):
+    try:
+        await _db.get_session(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    content = body.get("content", "")
+    message_type = body.get("message_type", "instruction")
+    existing = await _db.get_session_messages(session_id)
+    sequence = len(existing)
+    message = SessionMessage(
+        session_id=session_id,
+        sequence=sequence,
+        timestamp=datetime.now(timezone.utc),
+        role="user",
+        content=content,
+        message_type=message_type,
+    )
+    await _db.append_session_message(message)
+    await _session_broker.send_to_agent(session_id, content, message_type)
+    # Notify SSE subscribers
+    data = {"type": "session_message", **message.model_dump(mode="json")}
+    for q in list(_session_subscribers.get(session_id, [])):
+        await q.put(data)
+    return message.model_dump(mode="json")
+
+
+@app.get("/sessions/{session_id}/stream")
+async def stream_session(session_id: str, request: Request):
+    queue: asyncio.Queue = asyncio.Queue()
+    _session_subscribers[session_id].append(queue)
+
+    import json as _json
+
+    async def event_generator():
+        try:
+            # Replay existing session messages
+            for msg in await _db.get_session_messages(session_id):
+                yield {"data": _json.dumps({"type": "session_message", **msg.model_dump(mode="json")})}
+            # Replay existing log events (worker posts to /internal/log with job_id=session_id)
+            for event in await _db.get_log_events(session_id):
+                yield {"data": _json.dumps({"type": "log_event", **event.model_dump(mode="json")})}
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=1.0)
+                    if item is None:
+                        break
+                    yield {"data": _json.dumps(item)}
+                except asyncio.TimeoutError:
+                    if await request.is_disconnected():
+                        break
+                    yield {"data": ""}
+        finally:
+            if queue in _session_subscribers.get(session_id, []):
+                _session_subscribers[session_id].remove(queue)
+            if not _session_subscribers.get(session_id):
+                _session_subscribers.pop(session_id, None)
+
+    return EventSourceResponse(event_generator())
+
+
+@app.get("/sessions/{session_id}/gas")
+async def get_session_gas(session_id: str):
+    try:
+        session = await _db.get_session(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    return {
+        "gas_used_input": session.gas_used_input,
+        "gas_limit_input": session.gas_limit_input,
+        "gas_used_output": session.gas_used_output,
+        "gas_limit_output": session.gas_limit_output,
+        "topup_history": session.gas_topups,
+    }
+
+
+@app.post("/sessions/{session_id}/gas")
+async def add_session_gas(session_id: str, body: dict):
+    try:
+        await _db.get_session(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    input_amount = body.get("input_amount", 0)
+    output_amount = body.get("output_amount", 0)
+    await _db.add_session_gas(session_id, input_amount=input_amount, output_amount=output_amount)
+    session = await _db.get_session(session_id)
+    return {
+        "gas_used_input": session.gas_used_input,
+        "gas_limit_input": session.gas_limit_input,
+        "gas_used_output": session.gas_used_output,
+        "gas_limit_output": session.gas_limit_output,
+        "topup_history": session.gas_topups,
+        "status": session.status,
+    }
+
+
+@app.post("/sessions/{session_id}/cancel")
+async def cancel_session(session_id: str):
+    try:
+        session = await _db.get_session(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    finished_at = datetime.now(timezone.utc)
+    await _db.update_session_status(session_id, "cancelled", finished_at=finished_at)
+    await _session_broker.cleanup(session_id)
+    for q in _session_subscribers.pop(session_id, []):
+        await q.put(None)
+    return {"session_id": session_id, "status": "cancelled"}
+
+
+# ── Internal session endpoints (no auth, cluster-only) ────────────────────────
+
+@app.post("/internal/sessions/{session_id}/await-input")
+async def internal_await_input(session_id: str, body: dict):
+    """Worker suspends here; blocks until user sends a message; returns message content."""
+    question = body.get("question", "")
+    # Emit an agent_response session message with the question so the conversation is recorded
+    existing = await _db.get_session_messages(session_id)
+    sequence = len(existing)
+    agent_msg = SessionMessage(
+        session_id=session_id,
+        sequence=sequence,
+        timestamp=datetime.now(timezone.utc),
+        role="agent",
+        content=question,
+        message_type="input_request",
+    )
+    await _db.append_session_message(agent_msg)
+    data = {"type": "session_message", **agent_msg.model_dump(mode="json")}
+    for q in list(_session_subscribers.get(session_id, [])):
+        await q.put(data)
+    # Transition to waiting_for_user and block
+    await _db.update_session_status(session_id, "waiting_for_user")
+    response = await _session_broker.await_user_input(session_id, question)
+    await _db.update_session_status(session_id, "running")
+    return {"content": response}
+
+
+@app.post("/internal/sessions/{session_id}/interrupt-check")
+async def internal_interrupt_check(session_id: str):
+    """Worker polls here at loop start; returns interrupt if pending, else empty."""
+    interrupt = _session_broker.check_interrupt(session_id)
+    if interrupt:
+        return {"interrupt": interrupt}
+    return {}
+
+
+@app.post("/internal/sessions/{session_id}/status")
+async def internal_session_status(session_id: str, body: dict):
+    """Worker updates session status on completion/failure."""
+    status = body.get("status")
+    finished_at = None
+    if status in _SESSION_TERMINAL_STATUSES:
+        finished_at = datetime.now(timezone.utc)
+    try:
+        await _db.update_session_status(session_id, status, finished_at=finished_at)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    if status in _SESSION_TERMINAL_STATUSES:
+        await _session_broker.cleanup(session_id)
+        for q in _session_subscribers.pop(session_id, []):
+            await q.put(None)
+    return {"session_id": session_id, "status": status}
+
+
+@app.post("/internal/sessions/{session_id}/log")
+async def internal_session_log(session_id: str, body: dict):
+    """Worker posts agent response messages here."""
+    content = body.get("content", "")
+    existing = await _db.get_session_messages(session_id)
+    sequence = len(existing)
+    msg = SessionMessage(
+        session_id=session_id,
+        sequence=sequence,
+        timestamp=datetime.now(timezone.utc),
+        role="agent",
+        content=content,
+        message_type="agent_response",
+    )
+    await _db.append_session_message(msg)
+    data = {"type": "session_message", **msg.model_dump(mode="json")}
+    for q in list(_session_subscribers.get(session_id, [])):
+        await q.put(data)
+    return Response(status_code=200)
+
+
+# ── Project proxy endpoints ──────────────────────────────────────────────────
+
+def _get_user_token(request: Request) -> str:
+    """Extract user's OAuth token from request headers (set by oauth2-proxy)."""
+    headers = dict(request.headers)
+    return (
+        headers.get("X-Forwarded-Access-Token")
+        or headers.get("x-forwarded-access-token")
+        or headers.get("Authorization", "").removeprefix("Bearer ")
+        or ""
+    )
+
+
+@app.get("/projects/search")
+async def search_projects(q: str = "", request: Request = None):
+    user_token = _get_user_token(request)
+    results = _provider.search_projects(q, user_token)
+    return results
+
+
+@app.get("/projects/{project_id}/branches")
+async def list_branches(project_id: int, request: Request):
+    user_token = _get_user_token(request)
+    branches = _provider.list_branches(project_id, user_token)
+    return branches
+
+
+@app.get("/projects/{project_id}/mrs")
+async def list_mrs(project_id: int, request: Request):
+    user_token = _get_user_token(request)
+    mrs = _provider.list_open_mrs(project_id, user_token)
+    return [mr.model_dump(mode="json") for mr in mrs]
 
 
 @app.get("/")

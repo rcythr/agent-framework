@@ -2,7 +2,7 @@ import os
 import json
 import aiosqlite
 from datetime import datetime, timezone
-from shared.models import JobRecord, LogEvent
+from shared.models import JobRecord, LogEvent, SessionRecord, SessionMessage, SessionContext
 
 
 DB_PATH = os.getenv("DB_PATH", "gateway.db")
@@ -50,6 +50,36 @@ class Database:
                 event_type TEXT NOT NULL,
                 payload TEXT NOT NULL,
                 PRIMARY KEY (job_id, sequence)
+            )
+        """)
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                owner TEXT NOT NULL,
+                project_id INTEGER NOT NULL,
+                project_path TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                mr_iid INTEGER,
+                status TEXT NOT NULL,
+                context TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                finished_at TEXT,
+                gas_limit_input INTEGER NOT NULL DEFAULT 160000,
+                gas_limit_output INTEGER NOT NULL DEFAULT 40000,
+                gas_used_input INTEGER NOT NULL DEFAULT 0,
+                gas_used_output INTEGER NOT NULL DEFAULT 0,
+                gas_topups TEXT NOT NULL DEFAULT '[]'
+            )
+        """)
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS session_messages (
+                session_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                timestamp TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                message_type TEXT NOT NULL,
+                PRIMARY KEY (session_id, sequence)
             )
         """)
         await self._db.commit()
@@ -171,6 +201,138 @@ class Database:
         rows = await cursor.fetchall()
         return [_row_to_log_event(r) for r in rows]
 
+    # ── Session methods ───────────────────────────────────────────────────────
+
+    async def create_session(self, session: SessionRecord) -> None:
+        await self._db.execute(
+            """
+            INSERT INTO sessions (
+                id, owner, project_id, project_path, branch, mr_iid,
+                status, context, created_at, finished_at,
+                gas_limit_input, gas_limit_output,
+                gas_used_input, gas_used_output, gas_topups
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session.id,
+                session.owner,
+                session.project_id,
+                session.project_path,
+                session.branch,
+                session.mr_iid,
+                session.status,
+                json.dumps(session.context.model_dump()),
+                session.created_at.isoformat(),
+                session.finished_at.isoformat() if session.finished_at else None,
+                session.gas_limit_input,
+                session.gas_limit_output,
+                session.gas_used_input,
+                session.gas_used_output,
+                json.dumps(session.gas_topups),
+            ),
+        )
+        await self._db.commit()
+
+    async def update_session_status(
+        self, session_id: str, status: str, finished_at: datetime | None = None
+    ) -> None:
+        await self._db.execute(
+            "UPDATE sessions SET status = ?, finished_at = ? WHERE id = ?",
+            (
+                status,
+                finished_at.isoformat() if finished_at else None,
+                session_id,
+            ),
+        )
+        await self._db.commit()
+
+    async def get_session(self, session_id: str) -> SessionRecord:
+        cursor = await self._db.execute(
+            "SELECT * FROM sessions WHERE id = ?", (session_id,)
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise KeyError(f"Session not found: {session_id}")
+        return _row_to_session(row)
+
+    async def list_sessions(
+        self,
+        owner: str,
+        status: list[str] | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[SessionRecord]:
+        if status:
+            placeholders = ",".join("?" * len(status))
+            cursor = await self._db.execute(
+                f"SELECT * FROM sessions WHERE owner = ? AND status IN ({placeholders})"
+                " ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (owner, *status, limit, offset),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT * FROM sessions WHERE owner = ?"
+                " ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (owner, limit, offset),
+            )
+        rows = await cursor.fetchall()
+        return [_row_to_session(r) for r in rows]
+
+    async def append_session_message(self, message: SessionMessage) -> None:
+        await self._db.execute(
+            """
+            INSERT INTO session_messages (
+                session_id, sequence, timestamp, role, content, message_type
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                message.session_id,
+                message.sequence,
+                message.timestamp.isoformat(),
+                message.role,
+                message.content,
+                message.message_type,
+            ),
+        )
+        await self._db.commit()
+
+    async def get_session_messages(self, session_id: str) -> list[SessionMessage]:
+        cursor = await self._db.execute(
+            "SELECT * FROM session_messages WHERE session_id = ? ORDER BY sequence ASC",
+            (session_id,),
+        )
+        rows = await cursor.fetchall()
+        return [_row_to_session_message(r) for r in rows]
+
+    async def add_session_gas(
+        self, session_id: str, input_amount: int = 0, output_amount: int = 0
+    ) -> None:
+        session = await self.get_session(session_id)
+        topup = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "input_amount": input_amount,
+            "output_amount": output_amount,
+        }
+        new_topups = json.dumps(session.gas_topups + [topup])
+        await self._db.execute(
+            """UPDATE sessions
+               SET gas_limit_input = gas_limit_input + ?,
+                   gas_limit_output = gas_limit_output + ?,
+                   gas_topups = ?
+               WHERE id = ?""",
+            (input_amount, output_amount, new_topups, session_id),
+        )
+        await self._db.commit()
+
+    async def update_session_gas_used(
+        self, session_id: str, gas_used_input: int, gas_used_output: int
+    ) -> None:
+        await self._db.execute(
+            "UPDATE sessions SET gas_used_input = ?, gas_used_output = ? WHERE id = ?",
+            (gas_used_input, gas_used_output, session_id),
+        )
+        await self._db.commit()
+
 
 def _row_to_job(row: aiosqlite.Row) -> JobRecord:
     return JobRecord(
@@ -197,4 +359,35 @@ def _row_to_log_event(row: aiosqlite.Row) -> LogEvent:
         timestamp=datetime.fromisoformat(row["timestamp"]),
         event_type=row["event_type"],
         payload=json.loads(row["payload"]),
+    )
+
+
+def _row_to_session(row: aiosqlite.Row) -> SessionRecord:
+    return SessionRecord(
+        id=row["id"],
+        owner=row["owner"],
+        project_id=row["project_id"],
+        project_path=row["project_path"],
+        branch=row["branch"],
+        mr_iid=row["mr_iid"],
+        status=row["status"],
+        context=SessionContext(**json.loads(row["context"])),
+        created_at=datetime.fromisoformat(row["created_at"]),
+        finished_at=datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None,
+        gas_limit_input=row["gas_limit_input"],
+        gas_limit_output=row["gas_limit_output"],
+        gas_used_input=row["gas_used_input"],
+        gas_used_output=row["gas_used_output"],
+        gas_topups=json.loads(row["gas_topups"]),
+    )
+
+
+def _row_to_session_message(row: aiosqlite.Row) -> SessionMessage:
+    return SessionMessage(
+        session_id=row["session_id"],
+        sequence=row["sequence"],
+        timestamp=datetime.fromisoformat(row["timestamp"]),
+        role=row["role"],
+        content=row["content"],
+        message_type=row["message_type"],
     )

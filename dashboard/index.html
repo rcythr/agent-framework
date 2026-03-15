@@ -113,6 +113,50 @@
     .job-id-cell { font-family: monospace; font-size: 12px; display: flex; align-items: center; gap: 4px; }
     .placeholder-page { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; color: var(--text-muted); gap: 12px; }
     .placeholder-page h2 { font-size: 22px; color: var(--text); }
+    /* Session launcher */
+    .session-launcher { max-width: 680px; }
+    .form-group { margin-bottom: 16px; }
+    .form-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+    .form-input { width: 100%; background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 8px 10px; font-family: inherit; font-size: 13px; outline: none; }
+    .form-input:focus { border-color: var(--accent); }
+    textarea.form-input { resize: vertical; min-height: 80px; }
+    .search-results { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; margin-top: 4px; max-height: 200px; overflow-y: auto; }
+    .search-result-item { padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .search-result-item:last-child { border-bottom: none; }
+    .search-result-item:hover { background: rgba(255,255,255,.05); }
+    .search-result-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    /* Session workspace */
+    .session-workspace { display: flex; flex-direction: column; height: calc(100vh - 48px); }
+    .session-header { display: flex; align-items: center; gap: 16px; padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .session-header-info { flex: 1; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .session-header-title { font-weight: 600; font-size: 15px; }
+    .session-header-meta { font-size: 12px; color: var(--text-muted); }
+    .session-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 0; flex: 1; overflow: hidden; }
+    .session-pane { display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--border); }
+    .session-pane:last-child { border-right: none; }
+    .session-pane-title { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; padding: 10px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .conversation-thread { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .conv-message { display: flex; flex-direction: column; max-width: 80%; }
+    .conv-message.user { align-self: flex-end; align-items: flex-end; }
+    .conv-message.agent { align-self: flex-start; align-items: flex-start; }
+    .conv-bubble { padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .conv-message.user .conv-bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+    .conv-message.agent .conv-bubble { background: var(--surface2); color: var(--text); border-bottom-left-radius: 4px; }
+    .conv-meta { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+    .conv-type-badge { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: rgba(255,255,255,.08); color: var(--text-muted); margin-top: 3px; display: inline-block; }
+    .session-input-area { padding: 12px 16px; border-top: 1px solid var(--border); flex-shrink: 0; }
+    .session-input-label { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
+    .session-input-label.waiting { color: var(--amber); font-weight: 600; }
+    .session-input-label.interrupt { color: var(--red); }
+    .session-input-row { display: flex; gap: 8px; }
+    .session-input-row textarea { flex: 1; resize: none; height: 60px; }
+    .badge-configuring { background: rgba(124,133,168,.15); color: var(--text-muted); }
+    .badge-waiting_for_user { background: rgba(245,158,11,.15); color: var(--amber); }
+    .badge-complete { background: rgba(34,197,94,.15); color: var(--green); }
+    .dot-configuring { background: var(--text-muted); }
+    .dot-waiting_for_user { background: var(--amber); animation: pulse 1.5s ease-in-out infinite; }
+    .dot-complete { background: var(--green); }
   </style>
 </head>
 <body>
@@ -176,7 +220,7 @@ function StatusPill({ status }) {
 
 // ─── GasMeter ────────────────────────────────────────────────────────────────
 
-function GasMeter({ job, onGasAdded }) {
+function GasMeter({ job, onGasAdded, sessionMode }) {
   const [inputTopup, setInputTopup] = useState(20000);
   const [outputTopup, setOutputTopup] = useState(5000);
   const [adding, setAdding] = useState(false);
@@ -186,11 +230,12 @@ function GasMeter({ job, onGasAdded }) {
   const outputRatio = job.gas_limit_output ? Math.min(job.gas_used_output / job.gas_limit_output, 1) : 0;
   const inputExhausted = isOutOfGas && inputRatio >= 1;
   const outputExhausted = isOutOfGas && outputRatio >= 1;
+  const gasPath = sessionMode ? `/sessions/${job.id}/gas` : `/agents/${job.id}/gas`;
 
   async function handleAddGas() {
     setAdding(true);
     try {
-      await apiFetch(`/agents/${job.id}/gas`, {
+      await apiFetch(gasPath, {
         method: 'POST',
         body: JSON.stringify({ input_amount: inputTopup, output_amount: outputTopup }),
       });
@@ -650,17 +695,365 @@ function HistoryView() {
   );
 }
 
-// ─── New Session View (placeholder) ──────────────────────────────────────────
+// ─── SessionLauncher ──────────────────────────────────────────────────────────
 
-function NewSessionView() {
+function SessionLauncher({ onLaunched }) {
+  const [projectQuery, setProjectQuery] = useState('');
+  const [projectResults, setProjectResults] = useState([]);
+  const [selectedProject, setSelectedProject] = useState(null);
+  const [branches, setBranches] = useState([]);
+  const [branch, setBranch] = useState('');
+  const [mrs, setMrs] = useState([]);
+  const [mrIid, setMrIid] = useState('');
+  const [goal, setGoal] = useState('');
+  const [gasInput, setGasInput] = useState(160000);
+  const [gasOutput, setGasOutput] = useState(40000);
+  const [launching, setLaunching] = useState(false);
+  const [error, setError] = useState('');
+  const searchTimer = useRef(null);
+
+  useEffect(() => {
+    if (!projectQuery) { setProjectResults([]); return; }
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const results = await apiFetch(`/projects/search?q=${encodeURIComponent(projectQuery)}`);
+        setProjectResults(Array.isArray(results) ? results : []);
+      } catch { setProjectResults([]); }
+    }, 300);
+  }, [projectQuery]);
+
+  async function selectProject(p) {
+    setSelectedProject(p);
+    setProjectQuery(p.path_with_namespace || p.name || String(p.id));
+    setProjectResults([]);
+    setBranch('');
+    setMrIid('');
+    try {
+      const bs = await apiFetch(`/projects/${p.id}/branches`);
+      setBranches(Array.isArray(bs) ? bs : []);
+      if (bs && bs.length > 0) setBranch(p.default_branch || bs[0]);
+    } catch { setBranches([]); }
+    try {
+      const openMrs = await apiFetch(`/projects/${p.id}/mrs`);
+      setMrs(Array.isArray(openMrs) ? openMrs : []);
+    } catch { setMrs([]); }
+  }
+
+  async function handleLaunch() {
+    if (!selectedProject || !branch || !goal.trim()) {
+      setError('Project, branch, and goal are required.');
+      return;
+    }
+    setError('');
+    setLaunching(true);
+    try {
+      const body = {
+        project_id: selectedProject.id,
+        project_path: selectedProject.path_with_namespace || selectedProject.name || String(selectedProject.id),
+        branch,
+        goal: goal.trim(),
+        mr_iid: mrIid ? parseInt(mrIid) : null,
+        gas_limit_input: gasInput,
+        gas_limit_output: gasOutput,
+      };
+      const session = await apiFetch('/sessions', { method: 'POST', body: JSON.stringify(body) });
+      onLaunched(session);
+    } catch (e) {
+      setError(e.message || 'Failed to launch session.');
+    } finally {
+      setLaunching(false);
+    }
+  }
+
   return (
     <div className="page">
-      <div className="placeholder-page">
-        <h2>New Session</h2>
-        <p>Interactive sessions will be available in Phase 7.</p>
+      <div className="page-title">New Session</div>
+      <div className="session-launcher card">
+        <div className="form-group">
+          <label className="form-label">Project</label>
+          <input
+            className="form-input"
+            placeholder="Search projects…"
+            value={projectQuery}
+            onChange={e => { setProjectQuery(e.target.value); setSelectedProject(null); }}
+          />
+          {projectResults.length > 0 && (
+            <div className="search-results">
+              {projectResults.map(p => (
+                <div key={p.id} className="search-result-item" onClick={() => selectProject(p)}>
+                  <div>{p.path_with_namespace || p.name}</div>
+                  <div className="search-result-meta">{p.namespace?.name || ''} · {p.last_activity_at ? timeAgo(p.last_activity_at) : ''}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label className="form-label">Branch</label>
+            {branches.length > 0 ? (
+              <select className="form-input" value={branch} onChange={e => setBranch(e.target.value)}>
+                {branches.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+            ) : (
+              <input className="form-input" placeholder="main" value={branch} onChange={e => setBranch(e.target.value)} />
+            )}
+          </div>
+          <div className="form-group">
+            <label className="form-label">Target MR (optional)</label>
+            <select className="form-input" value={mrIid} onChange={e => setMrIid(e.target.value)}>
+              <option value="">None</option>
+              {mrs.map(mr => <option key={mr.iid} value={mr.iid}>!{mr.iid} {mr.title}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Goal</label>
+          <textarea className="form-input" placeholder="Describe what you want the agent to do…" value={goal} onChange={e => setGoal(e.target.value)} />
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label className="form-label">Input gas limit (tokens)</label>
+            <input className="form-input" type="number" min="1000" step="10000" value={gasInput} onChange={e => setGasInput(Number(e.target.value))} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Output gas limit (tokens)</label>
+            <input className="form-input" type="number" min="1000" step="5000" value={gasOutput} onChange={e => setGasOutput(Number(e.target.value))} />
+          </div>
+        </div>
+
+        {error && <div style={{ color: 'var(--red)', fontSize: 13, marginBottom: 12 }}>{error}</div>}
+
+        <button className="btn-primary" onClick={handleLaunch} disabled={launching || !selectedProject}>
+          {launching ? 'Launching…' : 'Launch Session'}
+        </button>
       </div>
     </div>
   );
+}
+
+// ─── SessionWorkspace ────────────────────────────────────────────────────────
+
+function SessionWorkspace({ session: initialSession, onNewSession }) {
+  const [session, setSession] = useState(initialSession);
+  const [messages, setMessages] = useState([]);
+  const [logEvents, setLogEvents] = useState([]);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [tick, setTick] = useState(0);
+  const threadRef = useRef(null);
+  const autoScrollRef = useRef(true);
+
+  // Tick for elapsed time
+  useEffect(() => {
+    const t = setInterval(() => setTick(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // SSE stream for session
+  useEffect(() => {
+    const es = new EventSource(`/sessions/${session.id}/stream`);
+    es.onmessage = e => {
+      if (!e.data) return;
+      try {
+        const item = JSON.parse(e.data);
+        if (item.type === 'session_message') {
+          setMessages(prev => {
+            if (prev.some(m => m.session_id === item.session_id && m.sequence === item.sequence)) return prev;
+            return [...prev, item];
+          });
+          if (item.role === 'agent' && item.message_type === 'input_request') {
+            setSession(s => ({ ...s, status: 'waiting_for_user' }));
+          }
+          if (item.role === 'agent' && item.message_type === 'agent_response') {
+            setSession(s => s.status === 'waiting_for_user' ? s : { ...s, status: 'running' });
+          }
+        } else if (item.type === 'log_event') {
+          setLogEvents(prev => [...prev, item]);
+        }
+      } catch {}
+    };
+    es.onerror = () => es.close();
+    return () => es.close();
+  }, [session.id]);
+
+  // Poll session status for terminal states
+  useEffect(() => {
+    const TERMINAL = ['complete', 'failed', 'cancelled', 'out_of_gas'];
+    if (TERMINAL.includes(session.status)) return;
+    let cancelled = false;
+    async function poll() {
+      try {
+        const data = await apiFetch(`/sessions/${session.id}`);
+        if (!cancelled) setSession(data);
+        if (!cancelled && !TERMINAL.includes(data.status)) setTimeout(poll, 3000);
+      } catch {}
+    }
+    const t = setTimeout(poll, 3000);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [session.id, session.status]);
+
+  // Auto-scroll conversation thread
+  useEffect(() => {
+    if (autoScrollRef.current && threadRef.current) {
+      threadRef.current.scrollTop = threadRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  const isTerminal = ['complete', 'failed', 'cancelled', 'out_of_gas'].includes(session.status);
+  const isWaiting = session.status === 'waiting_for_user';
+
+  async function handleSend() {
+    if (!input.trim()) return;
+    const messageType = isWaiting ? 'input_response' : 'interrupt';
+    setSending(true);
+    try {
+      await apiFetch(`/sessions/${session.id}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content: input.trim(), message_type: messageType }),
+      });
+      setInput('');
+      if (isWaiting) setSession(s => ({ ...s, status: 'running' }));
+    } catch {} finally {
+      setSending(false);
+    }
+  }
+
+  async function handleCancel() {
+    try {
+      await apiFetch(`/sessions/${session.id}/cancel`, { method: 'POST' });
+      setSession(s => ({ ...s, status: 'cancelled' }));
+    } catch {}
+  }
+
+  function handleThreadScroll() {
+    const el = threadRef.current;
+    if (!el) return;
+    autoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  }
+
+  const messageTypeLabel = {
+    instruction: 'instruction',
+    interrupt: 'interrupt',
+    agent_response: 'response',
+    input_request: 'question',
+    input_response: 'answer',
+  };
+
+  // Build a merged log event object for SessionLogPanel
+  const sessionLogEvents = logEvents.map(ev => ({ ...ev, job_id: ev.job_id || session.id }));
+
+  return (
+    <div className="session-workspace">
+      {/* Header */}
+      <div className="session-header">
+        <div className="session-header-info">
+          <span className="session-header-title">{session.project_path}</span>
+          <span className="session-header-meta">{session.branch}</span>
+          {session.mr_iid && <span className="session-header-meta">!{session.mr_iid}</span>}
+          <StatusPill status={session.status} />
+          <span className="elapsed">{elapsed(session.created_at)}</span>
+        </div>
+        {!isTerminal && (
+          <button className="btn-cancel btn-sm" onClick={handleCancel}>Cancel</button>
+        )}
+        {isTerminal && (
+          <button className="btn-primary btn-sm" onClick={() => onNewSession({ project: session.project_path, branch: session.branch })}>
+            New Session
+          </button>
+        )}
+      </div>
+
+      {/* Panes */}
+      <div className="session-panes">
+        {/* Left: Conversation thread */}
+        <div className="session-pane">
+          <div className="session-pane-title">Conversation</div>
+          <div className="conversation-thread" ref={threadRef} onScroll={handleThreadScroll}>
+            {messages.length === 0 && (
+              <div style={{ color: 'var(--text-muted)', fontSize: 12, textAlign: 'center', padding: 24 }}>
+                Session starting…
+              </div>
+            )}
+            {messages.map((m, i) => (
+              <div key={i} className={`conv-message ${m.role}`}>
+                <div className="conv-bubble">{m.content}</div>
+                <span className="conv-type-badge">{messageTypeLabel[m.message_type] || m.message_type}</span>
+                <span className="conv-meta">{timeAgo(m.timestamp)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="session-input-area">
+            {isTerminal ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 12, textAlign: 'center' }}>
+                Session ended · {session.status}
+              </div>
+            ) : (
+              <>
+                <div className={`session-input-label${isWaiting ? ' waiting' : ' interrupt'}`}>
+                  {isWaiting ? 'Agent is waiting for your answer' : 'Redirect the agent (sends interrupt)'}
+                </div>
+                <div className="session-input-row">
+                  <textarea
+                    className="form-input"
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    placeholder={isWaiting ? 'Type your answer…' : 'Type a redirect message…'}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                  />
+                  <button className="btn-primary" onClick={handleSend} disabled={sending || !input.trim()}>
+                    {sending ? '…' : 'Send'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Right: Execution trace */}
+        <div className="session-pane">
+          <div className="session-pane-title">Execution Trace</div>
+          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div className="log-panel" style={{ margin: 0, border: 'none', flex: 1, borderRadius: 0 }}>
+              <div className="log-panel-inner" style={{ maxHeight: 'none', flex: 1 }}>
+                {sessionLogEvents.length === 0
+                  ? <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>No events yet.</div>
+                  : sessionLogEvents.map((ev, i) => <LogEvent key={i} event={ev} />)
+                }
+              </div>
+            </div>
+          </div>
+          {/* Gas meter */}
+          <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
+            <GasMeter job={{ ...session, id: session.id }} onGasAdded={async () => {
+              try { const d = await apiFetch(`/sessions/${session.id}/gas`); setSession(s => ({ ...s, ...d })); } catch {}
+            }} sessionMode />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── New Session View ─────────────────────────────────────────────────────────
+
+function NewSessionView() {
+  const [activeSession, setActiveSession] = useState(null);
+  const [prefill, setPrefill] = useState(null);
+
+  if (activeSession) {
+    return (
+      <SessionWorkspace
+        session={activeSession}
+        onNewSession={p => { setActiveSession(null); setPrefill(p); }}
+      />
+    );
+  }
+  return <SessionLauncher onLaunched={setActiveSession} prefill={prefill} />;
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
