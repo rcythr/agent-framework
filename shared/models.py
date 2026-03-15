@@ -38,6 +38,7 @@ class JobRecord(BaseModel):
     context: dict[str, Any]
     started_at: datetime
     finished_at: datetime | None = None
+    triggered_by: str = "system"
     gas_limit_input: int = 80_000
     gas_limit_output: int = 20_000
     gas_used_input: int = 0
