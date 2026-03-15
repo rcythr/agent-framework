@@ -3,9 +3,18 @@ from typing import Any, Literal
 from datetime import datetime
 
 
+class ActivationRecord(BaseModel):
+    """Persistent record of a self-service webhook registration for a repository."""
+    project_id: str
+    webhook_id: str       # Provider-assigned ID; needed to deregister the webhook
+    secret: str           # HMAC secret generated at activation time
+    activated_by: str
+    activated_at: datetime
+
+
 class TaskSpec(BaseModel):
     task: str
-    project_id: int
+    project_id: int | str
     context: dict[str, Any]
 
 
@@ -32,7 +41,7 @@ class LogEvent(BaseModel):
 class JobRecord(BaseModel):
     id: str
     task: str
-    project_id: int
+    project_id: int | str
     project_name: str
     status: Literal["pending", "running", "completed", "failed", "cancelled", "out_of_gas"]
     context: dict[str, Any]
@@ -83,7 +92,7 @@ class AgentConfig(BaseModel):
 
 class SessionContext(BaseModel):
     """User-supplied context when creating an interactive session."""
-    project_id: int
+    project_id: int | str
     project_path: str
     branch: str
     goal: str
@@ -114,7 +123,7 @@ class SessionRecord(BaseModel):
     """Persistent record of an interactive agent session."""
     id: str
     owner: str
-    project_id: int
+    project_id: int | str
     project_path: str
     branch: str
     mr_iid: int | None

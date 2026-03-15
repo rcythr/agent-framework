@@ -2,7 +2,7 @@ import os
 import json
 import aiosqlite
 from datetime import datetime, timezone
-from shared.models import JobRecord, LogEvent, SessionRecord, SessionMessage, SessionContext
+from shared.models import JobRecord, LogEvent, SessionRecord, SessionMessage, SessionContext, ActivationRecord
 
 
 DB_PATH = os.getenv("DB_PATH", "gateway.db")
@@ -29,7 +29,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS jobs (
                 id TEXT PRIMARY KEY,
                 task TEXT NOT NULL,
-                project_id INTEGER NOT NULL,
+                project_id TEXT NOT NULL,
                 project_name TEXT NOT NULL,
                 status TEXT NOT NULL,
                 context TEXT NOT NULL,
@@ -56,7 +56,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
                 owner TEXT NOT NULL,
-                project_id INTEGER NOT NULL,
+                project_id TEXT NOT NULL,
                 project_path TEXT NOT NULL,
                 branch TEXT NOT NULL,
                 mr_iid INTEGER,
@@ -80,6 +80,15 @@ class Database:
                 content TEXT NOT NULL,
                 message_type TEXT NOT NULL,
                 PRIMARY KEY (session_id, sequence)
+            )
+        """)
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS activations (
+                project_id TEXT PRIMARY KEY,
+                webhook_id TEXT NOT NULL,
+                secret TEXT NOT NULL,
+                activated_by TEXT NOT NULL,
+                activated_at TEXT NOT NULL
             )
         """)
         await self._db.commit()
@@ -334,6 +343,47 @@ class Database:
         await self._db.commit()
 
 
+    # ── Activation methods ────────────────────────────────────────────────────
+
+    async def activate_project(self, activation: ActivationRecord) -> None:
+        await self._db.execute(
+            """
+            INSERT INTO activations (project_id, webhook_id, secret, activated_by, activated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                activation.project_id,
+                activation.webhook_id,
+                activation.secret,
+                activation.activated_by,
+                activation.activated_at.isoformat(),
+            ),
+        )
+        await self._db.commit()
+
+    async def deactivate_project(self, project_id: str) -> None:
+        await self._db.execute(
+            "DELETE FROM activations WHERE project_id = ?", (project_id,)
+        )
+        await self._db.commit()
+
+    async def get_activation(self, project_id: str) -> ActivationRecord | None:
+        cursor = await self._db.execute(
+            "SELECT * FROM activations WHERE project_id = ?", (project_id,)
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return _row_to_activation(row)
+
+    async def list_activations(self) -> list[ActivationRecord]:
+        cursor = await self._db.execute(
+            "SELECT * FROM activations ORDER BY activated_at DESC"
+        )
+        rows = await cursor.fetchall()
+        return [_row_to_activation(r) for r in rows]
+
+
 def _row_to_job(row: aiosqlite.Row) -> JobRecord:
     return JobRecord(
         id=row["id"],
@@ -379,6 +429,16 @@ def _row_to_session(row: aiosqlite.Row) -> SessionRecord:
         gas_used_input=row["gas_used_input"],
         gas_used_output=row["gas_used_output"],
         gas_topups=json.loads(row["gas_topups"]),
+    )
+
+
+def _row_to_activation(row: aiosqlite.Row) -> ActivationRecord:
+    return ActivationRecord(
+        project_id=row["project_id"],
+        webhook_id=row["webhook_id"],
+        secret=row["secret"],
+        activated_by=row["activated_by"],
+        activated_at=datetime.fromisoformat(row["activated_at"]),
     )
 
 

@@ -34,7 +34,7 @@ async def test_create_and_get_job(db):
     assert fetched.id == "job-1"
     assert fetched.task == "review_mr"
     assert fetched.status == "pending"
-    assert fetched.project_id == 1
+    assert str(fetched.project_id) == "1"
 
 
 @pytest.mark.asyncio

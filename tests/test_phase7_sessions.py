@@ -304,7 +304,7 @@ async def test_create_session_returns_configuring_then_running(client):
     # DB record exists
     session = await db.get_session(data["id"])
     assert session.owner == "alice"
-    assert session.project_id == 1
+    assert str(session.project_id) == "1"
 
 
 @pytest.mark.asyncio

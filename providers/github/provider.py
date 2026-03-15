@@ -11,6 +11,7 @@ from providers.base import (
     PushEvent,
     MREvent,
     CommentEvent,
+    WebhookRegistration,
 )
 from providers.github.webhook import verify_webhook, parse_webhook_event
 
@@ -145,3 +146,23 @@ class GitHubProvider(RepositoryProvider):
         self, headers: dict, body: dict
     ) -> PushEvent | MREvent | CommentEvent | None:
         return parse_webhook_event(headers, body)
+
+    def register_webhook(
+        self, project_id: int | str, webhook_url: str, secret: str, user_token: str
+    ) -> WebhookRegistration:
+        gh = Github(user_token)
+        repo = gh.get_repo(str(project_id))
+        hook = repo.create_hook(
+            name="web",
+            config={"url": webhook_url, "content_type": "json", "secret": secret},
+            events=["push", "pull_request", "issue_comment", "pull_request_review_comment"],
+            active=True,
+        )
+        return WebhookRegistration(webhook_id=str(hook.id), webhook_url=webhook_url)
+
+    def delete_webhook(
+        self, project_id: int | str, webhook_id: str, user_token: str
+    ) -> None:
+        gh = Github(user_token)
+        repo = gh.get_repo(str(project_id))
+        repo.get_hook(int(webhook_id)).delete()

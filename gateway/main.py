@@ -1,5 +1,6 @@
 import asyncio
 import os
+import secrets
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -18,10 +19,18 @@ from providers.registry import get_provider
 from providers.auth_registry import get_auth_provider
 from shared.models import (
     AgentConfig, JobRecord, SkillDef, ToolDef, TaskSpec, LogEvent,
-    SessionRecord, SessionMessage, SessionContext,
+    SessionRecord, SessionMessage, SessionContext, ActivationRecord,
 )
 
-WEBHOOK_SECRET = os.getenv("GITLAB_WEBHOOK_SECRET", "dev-webhook-secret")
+WEBHOOK_SECRET = (
+    os.getenv("WEBHOOK_SECRET")
+    or os.getenv("GITLAB_WEBHOOK_SECRET")
+    or os.getenv("GITHUB_WEBHOOK_SECRET")
+    or os.getenv("BITBUCKET_WEBHOOK_SECRET")
+    or os.getenv("GITEA_WEBHOOK_SECRET")
+    or "dev-webhook-secret"
+)
+PHALANX_WEBHOOK_URL = os.getenv("PHALANX_WEBHOOK_URL", "")
 DEFAULT_SESSION_INPUT_GAS_LIMIT = int(os.getenv("DEFAULT_SESSION_INPUT_GAS_LIMIT", "160000"))
 DEFAULT_SESSION_OUTPUT_GAS_LIMIT = int(os.getenv("DEFAULT_SESSION_OUTPUT_GAS_LIMIT", "40000"))
 
@@ -87,30 +96,41 @@ async def healthz():
     return {"status": "ok"}
 
 
-@app.post("/webhook/gitlab")
-async def webhook_gitlab(request: Request):
+async def _process_webhook(request: Request):
+    import json as _json
     body_bytes = await request.body()
     headers = dict(request.headers)
-
-    # Step 1: verify HMAC / token
-    if not _provider.verify_webhook(headers, body_bytes, WEBHOOK_SECRET):
-        raise HTTPException(status_code=401, detail="Invalid webhook token")
-
-    # Step 2: parse event
-    import json as _json
     body_dict = _json.loads(body_bytes)
-    event = _provider.parse_webhook_event(headers, body_dict)
 
-    # Step 3: map to task
+    # Step 1: parse first (safe) to extract project_id for per-repo secret lookup
+    event = _provider.parse_webhook_event(headers, body_dict)
+    project_id_str = str(event.project_id) if event else None
+
+    # Step 2: look up per-repo secret from DB; fall back to global secret
+    secret = WEBHOOK_SECRET
+    if project_id_str:
+        activation = await _db.get_activation(project_id_str)
+        if activation:
+            secret = activation.secret
+
+    # Step 3: verify signature with the resolved secret
+    if not _provider.verify_webhook(headers, body_bytes, secret):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    if event is None:
+        return Response(status_code=200)
+
+    # Step 4: map to task
     task_spec = map_event_to_task(event)
     if task_spec is None:
         return Response(status_code=200)
 
-    # Step 4: resolve agent config from per-project .agents/config.yaml
-    sha = task_spec.context.get("sha") or task_spec.context.get("commits", [{}])[0].get("sha", "HEAD")
+    # Step 5: resolve agent config from per-project .agents/config.yaml
+    commits = task_spec.context.get("commits") or []
+    sha = task_spec.context.get("sha") or (commits[0].get("sha", "HEAD") if commits else "HEAD")
     agent_config = await _config_loader.resolve(task_spec.project_id, sha)
 
-    # Step 5: check actor against allowed_users (deny-by-default: empty list = no dispatch)
+    # Step 6: check actor against allowed_users (deny-by-default: empty list = no dispatch)
     actor = getattr(event, "actor", None)
     if not agent_config.allowed_users or actor not in agent_config.allowed_users:
         import logging
@@ -120,13 +140,23 @@ async def webhook_gitlab(request: Request):
         )
         return Response(status_code=200)
 
-    # Step 6: spawn K8s job
+    # Step 7: spawn K8s job
     job_name = _kube.spawn_agent_job(task_spec, agent_config)
 
-    # Step 7: persist job record
+    # Step 8: persist job record
     await _db.create_job(_make_job_record(job_name, task_spec, agent_config))
 
     return {"job_name": job_name}
+
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    return await _process_webhook(request)
+
+
+@app.post("/webhook/gitlab")  # kept for backward compatibility with existing webhook configs
+async def webhook_gitlab(request: Request):
+    return await _process_webhook(request)
 
 
 @app.post("/trigger")
@@ -561,6 +591,73 @@ async def search_projects(q: str = "", request: Request = None):
     user_token = _get_user_token(request)
     results = _provider.search_projects(q, user_token)
     return results
+
+
+@app.get("/projects/activations")
+async def list_activations():
+    activations = await _db.list_activations()
+    return [
+        {
+            "project_id": a.project_id,
+            "webhook_id": a.webhook_id,
+            "activated_by": a.activated_by,
+            "activated_at": a.activated_at.isoformat(),
+        }
+        for a in activations
+    ]
+
+
+@app.post("/projects/{project_id:path}/activate")
+async def activate_project(project_id: str, request: Request):
+    if not PHALANX_WEBHOOK_URL:
+        raise HTTPException(status_code=500, detail="PHALANX_WEBHOOK_URL is not configured")
+
+    existing = await _db.get_activation(project_id)
+    if existing:
+        raise HTTPException(status_code=409, detail=f"{project_id!r} is already activated")
+
+    user_token = _get_user_token(request)
+    identity = _auth_provider.extract_user(dict(request.headers))
+
+    webhook_url = PHALANX_WEBHOOK_URL.rstrip("/") + "/webhook"
+    secret = secrets.token_hex(32)
+
+    reg = _provider.register_webhook(project_id, webhook_url, secret, user_token)
+
+    activation = ActivationRecord(
+        project_id=project_id,
+        webhook_id=reg.webhook_id,
+        secret=secret,
+        activated_by=identity.username or "unknown",
+        activated_at=datetime.now(timezone.utc),
+    )
+    await _db.activate_project(activation)
+
+    return {
+        "project_id": project_id,
+        "webhook_url": webhook_url,
+        "activated_by": activation.activated_by,
+    }
+
+
+@app.delete("/projects/{project_id:path}/activate")
+async def deactivate_project(project_id: str, request: Request):
+    activation = await _db.get_activation(project_id)
+    if not activation:
+        raise HTTPException(status_code=404, detail=f"{project_id!r} is not activated")
+
+    user_token = _get_user_token(request)
+    try:
+        _provider.delete_webhook(project_id, activation.webhook_id, user_token)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Failed to delete webhook %s for %s; removing activation record anyway",
+            activation.webhook_id, project_id,
+        )
+
+    await _db.deactivate_project(project_id)
+    return {"project_id": project_id, "status": "deactivated"}
 
 
 @app.get("/projects/{project_id}/branches")

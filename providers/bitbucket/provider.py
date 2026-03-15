@@ -12,6 +12,7 @@ from providers.base import (
     PushEvent,
     MREvent,
     CommentEvent,
+    WebhookRegistration,
 )
 from providers.bitbucket.webhook import verify_webhook, parse_webhook_event
 
@@ -46,6 +47,13 @@ class BitbucketProvider(RepositoryProvider):
         if len(parts) != 2:
             raise ValueError(f"Bitbucket project_id must be 'workspace/repo_slug', got {project_id!r}")
         return parts[0], parts[1]
+
+    def _token_auth(self, user_token: str) -> tuple[str, str]:
+        """Return (username, password) auth tuple from a colon-separated token or fall back to service account."""
+        if ":" in user_token:
+            username, password = user_token.split(":", 1)
+            return (username, password)
+        return self._auth
 
     # ── RepositoryProvider methods ────────────────────────────────────────────
 
@@ -158,12 +166,7 @@ class BitbucketProvider(RepositoryProvider):
         )
 
     def search_projects(self, query: str, user_token: str) -> list[dict]:
-        # user_token for Bitbucket is "username:app_password" (colon-separated)
-        if ":" in user_token:
-            username, password = user_token.split(":", 1)
-            auth = (username, password)
-        else:
-            auth = self._auth
+        auth = self._token_auth(user_token)
         r = httpx.get(
             f"{_API_BASE}/repositories",
             auth=auth,
@@ -182,11 +185,7 @@ class BitbucketProvider(RepositoryProvider):
 
     def list_branches(self, project_id: int | str, user_token: str) -> list[str]:
         workspace, slug = self._split(project_id)
-        if ":" in user_token:
-            username, password = user_token.split(":", 1)
-            auth = (username, password)
-        else:
-            auth = self._auth
+        auth = self._token_auth(user_token)
         r = httpx.get(
             f"{_API_BASE}/repositories/{workspace}/{slug}/refs/branches",
             auth=auth,
@@ -197,11 +196,7 @@ class BitbucketProvider(RepositoryProvider):
 
     def list_open_mrs(self, project_id: int | str, user_token: str) -> list[MergeRequest]:
         workspace, slug = self._split(project_id)
-        if ":" in user_token:
-            username, password = user_token.split(":", 1)
-            auth = (username, password)
-        else:
-            auth = self._auth
+        auth = self._token_auth(user_token)
         r = httpx.get(
             f"{_API_BASE}/repositories/{workspace}/{slug}/pullrequests",
             auth=auth,
@@ -227,3 +222,40 @@ class BitbucketProvider(RepositoryProvider):
         self, headers: dict, body: dict
     ) -> PushEvent | MREvent | CommentEvent | None:
         return parse_webhook_event(headers, body)
+
+    def register_webhook(
+        self, project_id: int | str, webhook_url: str, secret: str, user_token: str
+    ) -> WebhookRegistration:
+        workspace, slug = self._split(project_id)
+        auth = self._token_auth(user_token)
+        r = httpx.post(
+            f"{_API_BASE}/repositories/{workspace}/{slug}/hooks",
+            auth=auth,
+            json={
+                "description": "Phalanx",
+                "url": webhook_url,
+                "secret": secret,
+                "active": True,
+                "events": [
+                    "repo:push",
+                    "pullrequest:created",
+                    "pullrequest:updated",
+                    "pullrequest:fulfilled",
+                    "pullrequest:rejected",
+                    "pullrequest:comment_created",
+                ],
+            },
+        )
+        r.raise_for_status()
+        return WebhookRegistration(webhook_id=r.json()["uuid"], webhook_url=webhook_url)
+
+    def delete_webhook(
+        self, project_id: int | str, webhook_id: str, user_token: str
+    ) -> None:
+        workspace, slug = self._split(project_id)
+        auth = self._token_auth(user_token)
+        r = httpx.delete(
+            f"{_API_BASE}/repositories/{workspace}/{slug}/hooks/{webhook_id}",
+            auth=auth,
+        )
+        r.raise_for_status()

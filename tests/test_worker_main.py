@@ -20,6 +20,6 @@ def test_worker_main_reads_env_and_calls_run_agent():
 
         mock_run.assert_called_once_with(
             task="review_mr",
-            project_id=42,
+            project_id="42",
             context=context,
         )

@@ -12,6 +12,7 @@ from providers.base import (
     PushEvent,
     MREvent,
     CommentEvent,
+    WebhookRegistration,
 )
 from providers.gitea.webhook import verify_webhook, parse_webhook_event
 
@@ -227,3 +228,30 @@ class GiteaProvider(RepositoryProvider):
         self, headers: dict, body: dict
     ) -> PushEvent | MREvent | CommentEvent | None:
         return parse_webhook_event(headers, body)
+
+    def register_webhook(
+        self, project_id: int | str, webhook_url: str, secret: str, user_token: str
+    ) -> WebhookRegistration:
+        owner, repo = self._split(project_id)
+        r = httpx.post(
+            f"{self._base}/repos/{owner}/{repo}/hooks",
+            headers=self._user_headers(user_token),
+            json={
+                "type": "gitea",
+                "config": {"url": webhook_url, "content_type": "json", "secret": secret},
+                "events": ["push", "pull_request", "issue_comment"],
+                "active": True,
+            },
+        )
+        r.raise_for_status()
+        return WebhookRegistration(webhook_id=str(r.json()["id"]), webhook_url=webhook_url)
+
+    def delete_webhook(
+        self, project_id: int | str, webhook_id: str, user_token: str
+    ) -> None:
+        owner, repo = self._split(project_id)
+        r = httpx.delete(
+            f"{self._base}/repos/{owner}/{repo}/hooks/{webhook_id}",
+            headers=self._user_headers(user_token),
+        )
+        r.raise_for_status()

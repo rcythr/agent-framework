@@ -11,7 +11,7 @@ def map_event_to_task(
     if isinstance(event, MREvent):
         return TaskSpec(
             task="review_mr",
-            project_id=int(event.project_id),
+            project_id=event.project_id,
             context={
                 "mr_iid": event.mr.iid,
                 "action": event.action,
@@ -27,7 +27,7 @@ def map_event_to_task(
     if isinstance(event, CommentEvent):
         return TaskSpec(
             task="handle_comment",
-            project_id=int(event.project_id),
+            project_id=event.project_id,
             context={
                 "body": event.body,
                 "note_id": event.note_id,
@@ -39,7 +39,7 @@ def map_event_to_task(
     if isinstance(event, PushEvent):
         return TaskSpec(
             task="analyze_push",
-            project_id=int(event.project_id),
+            project_id=event.project_id,
             context={
                 "branch": event.branch,
                 "commits": [

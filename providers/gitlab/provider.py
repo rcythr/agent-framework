@@ -11,6 +11,7 @@ from providers.base import (
     PushEvent,
     MREvent,
     CommentEvent,
+    WebhookRegistration,
 )
 from providers.gitlab.webhook import verify_webhook, parse_webhook_event
 
@@ -156,3 +157,25 @@ class GitLabProvider(RepositoryProvider):
         self, headers: dict, body: dict
     ) -> PushEvent | MREvent | CommentEvent | None:
         return parse_webhook_event(headers, body)
+
+    def register_webhook(
+        self, project_id: int | str, webhook_url: str, secret: str, user_token: str
+    ) -> WebhookRegistration:
+        gl = gitlab.Gitlab(url=self._gl.url, private_token=user_token)
+        project = gl.projects.get(project_id)
+        hook = project.hooks.create({
+            "url": webhook_url,
+            "token": secret,
+            "push_events": True,
+            "merge_requests_events": True,
+            "note_events": True,
+            "confidential_note_events": True,
+        })
+        return WebhookRegistration(webhook_id=str(hook.id), webhook_url=webhook_url)
+
+    def delete_webhook(
+        self, project_id: int | str, webhook_id: str, user_token: str
+    ) -> None:
+        gl = gitlab.Gitlab(url=self._gl.url, private_token=user_token)
+        project = gl.projects.get(project_id)
+        project.hooks.delete(int(webhook_id))
