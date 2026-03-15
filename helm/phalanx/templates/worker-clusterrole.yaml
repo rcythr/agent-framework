@@ -1,0 +1,4 @@
+# The gateway's job-spawner role allows it to create Jobs that reference the
+# worker service account.  Workers themselves need no special RBAC — they are
+# ephemeral pods that communicate back to the gateway over HTTP, not via the
+# K8s API.  This file exists as a placeholder for any future worker-side RBAC.

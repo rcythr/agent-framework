@@ -1,5 +1,7 @@
 # Phalanx
 
+![Greek Phalanx](https://upload.wikimedia.org/wikipedia/commons/e/ed/Greek_Phalanx.jpg)
+
 Phalanx is an autonomous agent system for Git repositories. It listens to repository events — pushes, merge requests, comments — and dispatches fleets of AI agents to review code, implement changes, open merge requests, and post inline feedback. Agents run as ephemeral Kubernetes Jobs, coordinate through a persistent gateway, and can be monitored, steered, and interacted with in real time from a browser dashboard.
 
 The name comes from the ancient Greek battle formation: many units acting in tight coordination, each knowing its role, the whole more capable than any individual part.
@@ -128,10 +130,26 @@ phalanx/
 │   ├── load-images.sh       # Rebuild and redeploy without recreating the cluster
 │   ├── reseed-gitlab.sh
 │   └── seed-gitlab.sh       # Create test project, token, and webhook in GitLab
+├── helm/
+│   └── phalanx/             # Helm chart for production deployment
+│       ├── Chart.yaml
+│       ├── values.yaml
+│       └── templates/
+├── docs/
+│   ├── ARCHITECTURE.md      # Deep-dive technical architecture
+│   ├── local-development.md
+│   ├── walkthrough.md       # End-to-end usage walkthrough
+│   └── gitlab-oauth-setup.md
 ├── Dockerfile.gateway
 ├── Dockerfile.worker
 └── requirements.txt
 ```
+
+---
+
+## Walkthrough
+
+For a step-by-step walkthrough covering local development, per-project configuration, interactive sessions, gas top-up, custom CA certificates, and production Helm deployment, see [`docs/walkthrough.md`](docs/walkthrough.md).
 
 ---
 
@@ -310,16 +328,56 @@ Register the new cases in `providers/registry.py` and `providers/auth_registry.p
 
 ---
 
+## Deployment
+
+### Helm chart
+
+A Helm chart is provided under `helm/phalanx/`. It deploys the full Phalanx stack — gateway, oauth2-proxy, RBAC, ingress, and configures all Secrets — in a single command.
+
+```bash
+helm install phalanx ./helm/phalanx \
+  --namespace pi-agents --create-namespace \
+  --set provider=gitlab \
+  --set gitlab.url=https://gitlab.example.com \
+  --set gitlab.token=<token> \
+  --set gitlab.webhookSecret=<secret> \
+  --set llm.apiKey=<openai-api-key> \
+  --set llm.baseUrl=https://api.openai.com/v1 \
+  --set llm.model=gpt-4o \
+  --set oauth2proxy.clientId=<client-id> \
+  --set oauth2proxy.clientSecret=<client-secret> \
+  --set oauth2proxy.cookieSecret=<cookie-secret> \
+  --set ingress.host=phalanx.example.com
+```
+
+See [`helm/phalanx/values.yaml`](helm/phalanx/values.yaml) for the full list of configurable values.
+
+### Custom root certificates
+
+In enterprise or air-gapped environments where the git provider or LLM API is behind a corporate TLS proxy, Phalanx containers need to trust your internal CA. Mount your PEM-encoded certificate bundle using the `customCACerts` value:
+
+```yaml
+# values.yaml
+customCACerts: |
+  -----BEGIN CERTIFICATE-----
+  MIIBxTCCAW...
+  -----END CERTIFICATE-----
+```
+
+This mounts the certificate into both the gateway and worker containers and sets `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE` so all outbound HTTPS connections (to the provider API, LLM API, and gateway) will trust it automatically.
+
+---
+
 ## Implementation status
 
 | Phase | Description | Status |
 |---|---|---|
-| 0 | Provider abstraction layer | Planned |
-| 1 | Infrastructure foundation (KIND + GitLab) | Planned |
-| 2 | Core agent worker | Planned |
-| 3 | Structured logging and observability | Planned |
-| 4 | Per-project configuration | Planned |
-| 5 | Authentication | Planned |
-| 6 | Control plane dashboard | Planned |
-| 7 | Interactive sessions | Planned |
-| 8 | Additional providers (GitHub, etc.) | Deferred |
+| 0 | Provider abstraction layer | Complete |
+| 1 | Infrastructure foundation (KIND + GitLab) | Complete |
+| 2 | Core agent worker | Complete |
+| 3 | Structured logging and observability | Complete |
+| 4 | Per-project configuration | Complete |
+| 5 | Authentication | Complete |
+| 6 | Control plane dashboard | Complete |
+| 7 | Interactive sessions | Complete |
+| 8 | Additional providers (GitHub, Bitbucket, Gitea) | Partial — scaffolding in place |

@@ -1,0 +1,17 @@
+apiVersion: v2
+name: phalanx
+description: Autonomous AI agent system for Git repositories
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - ai
+  - agents
+  - git
+  - automation
+  - kubernetes
+home: https://github.com/rcythr/phalanx
+sources:
+  - https://github.com/rcythr/phalanx
+maintainers:
+  - name: Phalanx Authors

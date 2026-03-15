@@ -1,0 +1,68 @@
+{{- if .Values.oauth2proxy.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oauth2-proxy
+  namespace: {{ include "phalanx.namespace" . }}
+  labels:
+    app: oauth2-proxy
+    {{- include "phalanx.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oauth2-proxy
+  template:
+    metadata:
+      labels:
+        app: oauth2-proxy
+    spec:
+      containers:
+        - name: oauth2-proxy
+          image: {{ .Values.oauth2proxy.image.repository }}:{{ .Values.oauth2proxy.image.tag }}
+          imagePullPolicy: {{ .Values.oauth2proxy.image.pullPolicy }}
+          args:
+            - --provider={{ include "phalanx.oauth2Provider" . }}
+            - --upstream=http://pi-agent-gateway:80
+            - --http-address=0.0.0.0:4180
+            - --email-domain=*
+            - --pass-user-headers=true
+          env:
+            - name: OAUTH2_PROXY_GITLAB_GROUP
+              valueFrom:
+                configMapKeyRef:
+                  name: gateway-config
+                  key: gitlab-group
+                  optional: true
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-creds
+                  key: cookie-secret
+            - name: OAUTH2_PROXY_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-creds
+                  key: client-id
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oauth2-proxy-creds
+                  key: client-secret
+          ports:
+            - containerPort: 4180
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oauth2-proxy
+  namespace: {{ include "phalanx.namespace" . }}
+  labels:
+    {{- include "phalanx.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: oauth2-proxy
+  ports:
+    - port: 80
+      targetPort: 4180
+{{- end }}
