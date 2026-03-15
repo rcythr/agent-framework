@@ -85,4 +85,37 @@ class GitLabToolkit(ProviderToolkit):
                 },
                 "execute": lambda mr_iid: self.provider.get_mr_diff(self.project_id, mr_iid),
             },
+            {
+                "name": "post_inline_comment",
+                "description": "Post an inline review comment on a specific diff line.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "mr_iid": {"type": "integer"},
+                        "path": {"type": "string", "description": "File path"},
+                        "line": {"type": "integer", "description": "Line number"},
+                        "body": {"type": "string", "description": "Comment body"},
+                    },
+                    "required": ["mr_iid", "path", "line", "body"],
+                },
+                "execute": lambda mr_iid, path, line, body: self.provider.post_inline_comment(
+                    self.project_id, mr_iid, path, line, body
+                ),
+            },
+            {
+                "name": "update_pipeline_status",
+                "description": "Post a commit status result.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "sha": {"type": "string", "description": "Commit SHA"},
+                        "state": {"type": "string", "description": "Status state (success, failed, pending, running)"},
+                        "description": {"type": "string", "description": "Status description"},
+                    },
+                    "required": ["sha", "state", "description"],
+                },
+                "execute": lambda sha, state, description: self.provider.update_pipeline_status(
+                    self.project_id, sha, state, description
+                ),
+            },
         ]
