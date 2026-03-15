@@ -12,13 +12,13 @@ from providers.base import (
 
 def verify_webhook(headers: dict, body: bytes, secret: str) -> bool:
     """
-    Verify a GitHub webhook using HMAC-SHA256.
-    GitHub sends the signature as 'sha256=<hex>' in X-Hub-Signature-256.
+    Verify a Gitea webhook using HMAC-SHA256.
+    Gitea sends the hex digest (no prefix) in X-Gitea-Signature.
     """
-    sig_header = headers.get("X-Hub-Signature-256") or headers.get("x-hub-signature-256", "")
-    if not sig_header.startswith("sha256="):
+    sig_header = headers.get("X-Gitea-Signature") or headers.get("x-gitea-signature", "")
+    if not sig_header:
         return False
-    expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(sig_header, expected)
 
 
@@ -26,20 +26,17 @@ def parse_webhook_event(
     headers: dict, body: dict
 ) -> PushEvent | MREvent | CommentEvent | None:
     """
-    Map a GitHub webhook payload to a provider-agnostic event model.
+    Map a Gitea webhook payload to a provider-agnostic event model.
     Returns None for unhandled event types.
     """
-    event_type = headers.get("X-GitHub-Event") or headers.get("x-github-event", "")
+    event_type = headers.get("X-Gitea-Event") or headers.get("x-gitea-event", "")
 
     if event_type == "push":
-        # Ignore branch delete events (empty commits list, zero sha)
-        if body.get("after", "").replace("0", "") == "":
-            return None
         return _parse_push_event(body)
     elif event_type == "pull_request":
         return _parse_pr_event(body)
-    elif event_type in ("pull_request_review_comment", "issue_comment"):
-        return _parse_comment_event(body, event_type)
+    elif event_type == "issue_comment":
+        return _parse_comment_event(body)
     else:
         return None
 
@@ -50,16 +47,16 @@ def _parse_push_event(body: dict) -> PushEvent:
 
     commits = [
         Commit(
-            sha=c["id"],
+            sha=c.get("id", ""),
             title=c.get("message", "").split("\n")[0],
             author=c.get("author", {}).get("name", ""),
         )
         for c in body.get("commits", [])
     ]
 
-    actor = body.get("pusher", {}).get("name", "") or body.get("sender", {}).get("login", "")
     repo = body.get("repository", {})
     project_id = repo.get("full_name", str(repo.get("id", "")))
+    actor = body.get("pusher", {}).get("login", "")
 
     return PushEvent(
         branch=branch,
@@ -76,11 +73,11 @@ def _parse_pr_event(body: dict) -> MREvent:
     project_id = repo.get("full_name", str(repo.get("id", "")))
 
     mr = MergeRequest(
-        iid=pr["number"],
+        iid=pr.get("number", 0),
         title=pr.get("title", ""),
         description=pr.get("body") or "",
-        source_branch=pr.get("head", {}).get("ref", ""),
-        target_branch=pr.get("base", {}).get("ref", ""),
+        source_branch=pr.get("head", {}).get("label", ""),
+        target_branch=pr.get("base", {}).get("label", ""),
         web_url=pr.get("html_url", ""),
     )
 
@@ -94,31 +91,22 @@ def _parse_pr_event(body: dict) -> MREvent:
     )
 
 
-def _parse_comment_event(body: dict, event_type: str) -> CommentEvent | None:
+def _parse_comment_event(body: dict) -> CommentEvent | None:
     repo = body.get("repository", {})
     project_id = repo.get("full_name", str(repo.get("id", "")))
     actor = body.get("sender", {}).get("login", "")
 
-    if event_type == "pull_request_review_comment":
-        comment = body.get("comment", {})
-        pr = body.get("pull_request", {})
-        mr_iid = pr.get("number")
-        note_id = comment.get("id", "")
-        comment_body = comment.get("body", "")
-    else:
-        # issue_comment — only handle comments on pull requests
-        issue = body.get("issue", {})
-        if "pull_request" not in issue:
-            return None
-        comment = body.get("comment", {})
-        mr_iid = issue.get("number")
-        note_id = comment.get("id", "")
-        comment_body = comment.get("body", "")
+    issue = body.get("issue", {})
+    # Only handle comments on pull requests
+    if not issue.get("pull_request"):
+        return None
+
+    comment = body.get("comment", {})
 
     return CommentEvent(
-        body=comment_body,
+        body=comment.get("body", ""),
         project_id=project_id,
-        mr_iid=mr_iid,
-        note_id=note_id,
+        mr_iid=issue.get("number"),
+        note_id=comment.get("id", ""),
         actor=actor,
     )

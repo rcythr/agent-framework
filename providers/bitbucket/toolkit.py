@@ -2,8 +2,8 @@ from worker.tools.toolkit_base import ProviderToolkit
 from providers.base import RepositoryProvider
 
 
-class GitHubToolkit(ProviderToolkit):
-    """GitHub implementation of ProviderToolkit."""
+class BitbucketToolkit(ProviderToolkit):
+    """Bitbucket implementation of ProviderToolkit."""
 
     def __init__(self, provider: RepositoryProvider, project_id: int | str):
         self.provider = provider
@@ -64,7 +64,7 @@ class GitHubToolkit(ProviderToolkit):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "mr_iid": {"type": "integer", "description": "Pull request number"},
+                        "mr_iid": {"type": "integer", "description": "Pull request ID"},
                         "body": {"type": "string"},
                     },
                     "required": ["mr_iid", "body"],
@@ -79,7 +79,7 @@ class GitHubToolkit(ProviderToolkit):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "mr_iid": {"type": "integer", "description": "Pull request number"},
+                        "mr_iid": {"type": "integer", "description": "Pull request ID"},
                     },
                     "required": ["mr_iid"],
                 },
@@ -91,7 +91,7 @@ class GitHubToolkit(ProviderToolkit):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "mr_iid": {"type": "integer", "description": "Pull request number"},
+                        "mr_iid": {"type": "integer", "description": "Pull request ID"},
                         "path": {"type": "string", "description": "File path"},
                         "line": {"type": "integer", "description": "Line number"},
                         "body": {"type": "string", "description": "Comment body"},
@@ -111,7 +111,7 @@ class GitHubToolkit(ProviderToolkit):
                         "sha": {"type": "string", "description": "Commit SHA"},
                         "state": {
                             "type": "string",
-                            "description": "Status state (pending, success, failure, error)",
+                            "description": "Status state (pending, running, success, failed)",
                         },
                         "description": {"type": "string", "description": "Status description"},
                     },

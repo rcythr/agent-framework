@@ -12,7 +12,7 @@ async def _main() -> None:
     else:
         await run_agent(
             task=os.environ["TASK"],
-            project_id=int(os.environ["PROJECT_ID"]),
+            project_id=os.environ["PROJECT_ID"],
             context=json.loads(os.environ["TASK_CONTEXT"]),
         )
 

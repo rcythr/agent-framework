@@ -49,7 +49,7 @@ def build_task_message(task: str, context: dict) -> str:
             )
 
 
-async def run_agent(task: str, project_id: int, context: dict) -> None:
+async def run_agent(task: str, project_id: int | str, context: dict) -> None:
     toolkit = get_toolkit(project_id=project_id)
     tools = toolkit.get_tools()
 
@@ -168,7 +168,7 @@ class _SessionEventHandler:
 
 
 async def run_session(session_id: str) -> None:
-    project_id = int(os.getenv("PROJECT_ID", "0"))
+    project_id = os.getenv("PROJECT_ID", "0")
     goal = os.getenv("SESSION_GOAL", "")
     gateway_url = os.getenv("GATEWAY_URL", "http://pi-agent-gateway")
     endpoint = os.getenv("LLM_ENDPOINT", "https://api.openai.com/v1")

@@ -56,6 +56,12 @@ class MRResult(BaseModel):
     web_url: str
 
 
+class WebhookRegistration(BaseModel):
+    """Returned by register_webhook; contains provider-assigned IDs needed for later deletion."""
+    webhook_id: str
+    webhook_url: str
+
+
 class RepositoryProvider(ABC):
     """
     Abstract interface for all repository provider operations.
@@ -137,3 +143,19 @@ class RepositoryProvider(ABC):
         Parse a raw webhook payload into a provider-agnostic event model.
         Returns None for event types the system does not handle.
         """
+
+    @abstractmethod
+    def register_webhook(
+        self, project_id: int | str, webhook_url: str, secret: str, user_token: str
+    ) -> WebhookRegistration:
+        """
+        Register a webhook on the repository that will POST to webhook_url.
+        Uses user_token to authenticate the API call.
+        Returns a WebhookRegistration containing the provider-assigned webhook_id.
+        """
+
+    @abstractmethod
+    def delete_webhook(
+        self, project_id: int | str, webhook_id: str, user_token: str
+    ) -> None:
+        """Remove a previously registered webhook by its provider-assigned ID."""
