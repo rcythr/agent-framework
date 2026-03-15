@@ -564,14 +564,14 @@ async def search_projects(q: str = "", request: Request = None):
 
 
 @app.get("/projects/{project_id}/branches")
-async def list_branches(project_id: int, request: Request):
+async def list_branches(project_id: str, request: Request):
     user_token = _get_user_token(request)
     branches = _provider.list_branches(project_id, user_token)
     return branches
 
 
 @app.get("/projects/{project_id}/mrs")
-async def list_mrs(project_id: int, request: Request):
+async def list_mrs(project_id: str, request: Request):
     user_token = _get_user_token(request)
     mrs = _provider.list_open_mrs(project_id, user_token)
     return [mr.model_dump(mode="json") for mr in mrs]
