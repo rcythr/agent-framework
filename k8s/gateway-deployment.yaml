@@ -39,6 +39,16 @@ spec:
               value: "localhost:5001/pi-agent-worker:latest"
             - name: PI_AGENT_NAMESPACE
               value: "pi-agents"
+            - name: AGENT_CONFIG_DIR
+              value: .agents
+            - name: DEFAULT_JOB_INPUT_GAS_LIMIT
+              value: "80000"
+            - name: DEFAULT_JOB_OUTPUT_GAS_LIMIT
+              value: "20000"
+            - name: DEFAULT_SESSION_INPUT_GAS_LIMIT
+              value: "160000"
+            - name: DEFAULT_SESSION_OUTPUT_GAS_LIMIT
+              value: "40000"
 ---
 apiVersion: v1
 kind: Service
