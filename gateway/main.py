@@ -5,6 +5,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 from sse_starlette.sse import EventSourceResponse
 
@@ -26,6 +27,7 @@ _config_loader: ConfigLoader | None = None
 _subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
 
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "out_of_gas"}
+_gas_waiters: dict[str, list[asyncio.Queue]] = defaultdict(list)
 
 
 @asynccontextmanager
@@ -213,3 +215,73 @@ async def oauth2_proxy_config():
     cfg = _auth_provider.oauth_proxy_config()
     args = [f"--provider={cfg.provider_flag}"] + cfg.extra_flags
     return {"args": args}
+
+
+@app.post("/agents/{job_id}/cancel")
+async def cancel_agent(job_id: str):
+    try:
+        await _db.get_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    try:
+        _kube.delete_job(job_id)
+    except Exception:
+        pass  # Job may already be gone or not exist in K8s
+    finished_at = datetime.now(timezone.utc)
+    await _db.update_job_status(job_id, "cancelled", finished_at=finished_at)
+    for q in _subscribers.pop(job_id, []):
+        await q.put(None)
+    return {"job_id": job_id, "status": "cancelled"}
+
+
+@app.get("/agents/{job_id}/gas")
+async def get_gas(job_id: str):
+    try:
+        job = await _db.get_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return {
+        "gas_used_input": job.gas_used_input,
+        "gas_limit_input": job.gas_limit_input,
+        "gas_used_output": job.gas_used_output,
+        "gas_limit_output": job.gas_limit_output,
+        "topup_history": job.gas_topups,
+    }
+
+
+@app.post("/agents/{job_id}/gas")
+async def add_gas(job_id: str, body: dict):
+    try:
+        job = await _db.get_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    input_amount = body.get("input_amount", 0)
+    output_amount = body.get("output_amount", 0)
+    await _db.add_gas(job_id, input_amount=input_amount, output_amount=output_amount)
+    if job.status == "out_of_gas":
+        # Unblock the waiting worker via in-memory gas waiters
+        for q in list(_gas_waiters.get(job_id, [])):
+            await q.put({"input_amount": input_amount, "output_amount": output_amount})
+    job = await _db.get_job(job_id)
+    return {
+        "gas_used_input": job.gas_used_input,
+        "gas_limit_input": job.gas_limit_input,
+        "gas_used_output": job.gas_used_output,
+        "gas_limit_output": job.gas_limit_output,
+        "topup_history": job.gas_topups,
+        "status": job.status,
+    }
+
+
+@app.post("/internal/jobs/{job_id}/add-gas")
+async def internal_add_gas(job_id: str, body: dict):
+    """Signal any worker suspended in out_of_gas state to resume."""
+    for q in list(_gas_waiters.get(job_id, [])):
+        await q.put(body)
+    return {"job_id": job_id}
+
+
+@app.get("/")
+async def dashboard():
+    dashboard_path = os.path.join(os.path.dirname(__file__), "..", "dashboard", "index.html")
+    return FileResponse(dashboard_path)

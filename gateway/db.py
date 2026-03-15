@@ -1,7 +1,7 @@
 import os
 import json
 import aiosqlite
-from datetime import datetime
+from datetime import datetime, timezone
 from shared.models import JobRecord, LogEvent
 
 
@@ -139,6 +139,27 @@ class Database:
                 event.event_type,
                 json.dumps(event.payload),
             ),
+        )
+        await self._db.commit()
+
+    async def add_gas(
+        self, job_id: str, input_amount: int = 0, output_amount: int = 0
+    ) -> None:
+        """Increment gas limits and record the topup in gas_topups."""
+        job = await self.get_job(job_id)
+        topup = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "input_amount": input_amount,
+            "output_amount": output_amount,
+        }
+        new_topups = json.dumps(job.gas_topups + [topup])
+        await self._db.execute(
+            """UPDATE jobs
+               SET gas_limit_input = gas_limit_input + ?,
+                   gas_limit_output = gas_limit_output + ?,
+                   gas_topups = ?
+               WHERE id = ?""",
+            (input_amount, output_amount, new_topups, job_id),
         )
         await self._db.commit()
 
