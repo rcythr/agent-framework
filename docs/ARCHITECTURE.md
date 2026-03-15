@@ -1,8 +1,8 @@
-# Agent System × GitLab Integration Proposal
+# Phalanx Architecture
 
 ## Overview
 
-This document proposes an architecture and implementation plan for an **autonomous agent system** that integrates with **Git repository hosting platforms**, deployed on **Kubernetes**. The initial implementation targets GitLab, but the system is designed around a provider abstraction layer so that support for other platforms (GitHub, Bitbucket, Gitea, etc.) can be added without changes to the core agent loop, gateway, or dashboard. The agent loop is implemented in Python as the `Agent` class — an LLM call loop with tool dispatch, event emission, and a two-queue message model for steering and follow-ups. Its design draws on ideas from minimal agentic loop libraries. The system autonomously reacts to repository events, performs code review, implements changes, and can be triggered manually via the dashboard or API.
+Phalanx is an **autonomous agent system** that integrates with **Git repository hosting platforms**, deployed on **Kubernetes**. It is designed around a provider abstraction layer so that support for GitLab, GitHub, Bitbucket, Gitea, and others can be added without changes to the core agent loop, gateway, or dashboard. The agent loop is implemented in Python as the `Agent` class — an LLM call loop with tool dispatch, event emission, and a two-queue message model for steering and follow-ups. The system autonomously reacts to repository events, performs code review, implements changes, and can be triggered manually via the dashboard or API.
 
 ---
 
@@ -1682,7 +1682,7 @@ class AuthProvider(ABC):
 
 It implements `oauth_proxy_config()` returning `--provider=gitlab` and `--gitlab-group=<group>` in `extra_flags`, and `extract_user()` reading `X-Forwarded-User` (username), `X-Forwarded-Email`, and `X-Forwarded-Groups` — the headers oauth2-proxy sets in GitLab mode.
 
-Additional implementations are deferred until their corresponding repo providers are built (see Phase 8 in the implementation plan). The expected future implementations and their header mappings are documented in `providers/auth_base.py` as comments alongside the ABC, so the contract is clear when the time comes:
+Additional implementations and their header mappings are documented in `providers/auth_base.py` as comments alongside the ABC:
 
 - **`GitHubAuthProvider`** — `--provider=github`, `--github-org`, reads `X-Forwarded-User` (login handle) and `X-Forwarded-Groups`
 - **`OIDCAuthProvider`** — `--provider=oidc`, configurable issuer URL, reads `X-Auth-Request-User` / `X-Auth-Request-Email` / `X-Auth-Request-Groups` (different header names from the provider-specific modes)
@@ -1704,7 +1704,7 @@ def get_auth_provider() -> AuthProvider:
                 group=os.getenv("GITLAB_AUTH_GROUP"),
                 url=os.getenv("GITLAB_URL", "https://gitlab.com"),
             )
-        # "github" and "oidc" cases added in Phase 8 when those providers are implemented
+        # "github" and "oidc" cases — see providers/github/auth.py and providers/auth_registry.py
         case _:
             raise ValueError(f"Unknown auth provider: {auth_name!r}")
 ```
@@ -1730,7 +1730,7 @@ When `AUTH_PROVIDER=gitlab` (the default), create a GitLab OAuth2 application:
 |---|---|
 | Name | `Agent Control Plane` |
 | Redirect URI | `https://pi-agent.your-domain.com/oauth2/callback` |
-| Scopes | `openid`, `profile`, `email`, `read_user` |
+| Scopes | `api`, `read_user`, `openid` |
 | Confidential | ✅ |
 
 Store the Application ID and Secret in the `oauth2-proxy-creds` K8s Secret alongside `GITLAB_AUTH_GROUP`.
@@ -1741,15 +1741,13 @@ Webhook and internal paths bypass oauth2-proxy and route directly to the gateway
 
 ### When to Override AUTH_PROVIDER
 
-Initially only the first row applies. The table documents the intended future behaviour so the design intent is clear when additional providers are implemented.
-
-| Scenario | `PROVIDER` | `AUTH_PROVIDER` | Status |
-|---|---|---|---|
-| GitLab repos, GitLab auth | `gitlab` | _(inherits)_ | ✅ Implemented |
-| GitHub repos, GitHub auth | `github` | _(inherits)_ | ⏳ Phase 8 |
-| GitLab repos, Keycloak/Okta | `gitlab` | `oidc` | ⏳ Phase 8 |
-| GitHub repos, Keycloak/Okta | `github` | `oidc` | ⏳ Phase 8 |
-| Multiple providers, single IdP | _(per deployment)_ | `oidc` | ⏳ Phase 8 |
+| Scenario | `PROVIDER` | `AUTH_PROVIDER` |
+|---|---|---|
+| GitLab repos, GitLab auth | `gitlab` | _(inherits)_ |
+| GitHub repos, GitHub auth | `github` | _(inherits)_ |
+| GitLab repos, Keycloak/Okta | `gitlab` | `oidc` |
+| GitHub repos, Keycloak/Okta | `github` | `oidc` |
+| Multiple providers, single IdP | _(per deployment)_ | `oidc` |
 
 ---
 
@@ -1782,329 +1780,6 @@ Initially only the first row applies. The table documents the intended future be
 | Gas limit enforcement | Gas limit is enforced inside the `Agent` class before each new LLM call; it cannot be bypassed by the worker or toolkit code |
 
 
----
-
-## Implementation Plan
-
-The implementation is broken into seven phases, each independently deployable and testable. Each phase begins with tests written against the specified contracts before any implementation code is written — this allows an AI agent iterating on the codebase to run the test suite after each change and get unambiguous pass/fail signal.
-
-Phases are ordered so that every phase produces a working, observable system. Infrastructure comes first, then the core agent loop, then observability, then configuration, then authentication, then the dashboard, and finally interactive sessions.
-
----
-
-### Phase 1 — Infrastructure Foundation
-
-**Goal:** A working Kubernetes namespace with the gateway running, able to receive webhook events and spawn Jobs.
-
-**Scope:**
-- `shared/models.py` — `TaskSpec`, `JobRecord` only
-- `gateway/db.py` — jobs table only (no log events yet)
-- `gateway/kube_client.py` — job spawning, no config resolution yet; uses global image unconditionally
-- `providers/base.py` — `RepositoryProvider` ABC, `ProviderToolkit` ABC, all shared event and data models
-- `providers/auth_base.py` — `AuthProvider` ABC, `OAuthProxyConfig`, `UserIdentity` data classes (the abstraction layer; no additional implementations yet)
-- `providers/gitlab/provider.py` — GitLab implementation (file fetch, commit, MR, comments, status, webhook verify, event parse)
-- `providers/gitlab/webhook.py` — webhook signature verification and `parse_webhook_event`
-- `providers/gitlab/auth.py` — `GitLabAuthProvider`: `oauth_proxy_config()` and `extract_user()`
-- `providers/registry.py` — provider factory, reads `PROVIDER` env var
-- `providers/auth_registry.py` — auth provider factory; initially only `gitlab` case; structured for future extension
-- `gateway/event_mapper.py` — maps provider-agnostic events to `TaskSpec`; all three event types
-- `gateway/main.py` — `/webhook/gitlab`, `/trigger`, `/healthz`, `/agents`, `/agents/history`
-- `k8s/` — namespace, gateway Deployment, RBAC, Secrets, Service, Ingress (no oauth2-proxy yet)
-
-**Tests to write first:**
-- Unit: `GitLabProvider.parse_webhook_event` maps all three raw GitLab payloads to the correct shared event models; returns `None` for unknown event types
-- Unit: `GitLabProvider.verify_webhook` returns `True` for valid HMAC, `False` for invalid
-- Unit: `event_mapper` correctly maps `MREvent`, `CommentEvent`, `PushEvent` to `TaskSpec`; returns `None` for `None` input
-- Unit: `event_mapper` handles missing optional fields gracefully (e.g. `CommentEvent` with no `mr_iid`)
-- Unit: `get_provider()` returns `GitLabProvider` when `PROVIDER=gitlab`; raises `ValueError` for unknown provider
-- Unit: `get_auth_provider()` returns `GitLabAuthProvider` when `AUTH_PROVIDER=gitlab`
-- Unit: `get_auth_provider()` defaults to `PROVIDER` value when `AUTH_PROVIDER` is unset
-- Unit: `get_auth_provider()` raises `ValueError` for unknown auth provider names
-- Unit: `GitLabAuthProvider.extract_user()` reads `X-Forwarded-User`, `X-Forwarded-Email`, `X-Forwarded-Groups` and returns a `UserIdentity`
-- Unit: `GitLabAuthProvider.oauth_proxy_config()` returns `provider_flag="gitlab"` and `--gitlab-group` in `extra_flags`
-- Unit: `GET /internal/oauth2-proxy-config` renders `auth_provider.oauth_proxy_config()` as CLI args correctly
-- Unit: `db.py` — `create_job`, `update_job_status`, `list_jobs`, `get_job` round-trip correctly
-- Unit: `kube_client` — mock the K8s batch API; assert correct Job manifest shape (env vars, image, restart policy, TTL)
-- Integration: `POST /webhook/gitlab` with a valid token and MR Hook payload returns `{"job_name": ...}` and creates a DB record
-- Integration: `POST /webhook/gitlab` with an invalid token returns 401
-- Integration: `POST /trigger` spawns a job and persists a `JobRecord`
-- Integration: `GET /agents` returns only `pending`/`running` jobs
-- Integration: `GET /agents/history` returns completed/failed/cancelled jobs with pagination
-- E2E (staging): post a real GitLab webhook; verify K8s Job appears in cluster; verify DB record created
-
-**Definition of done:** Gateway runs in cluster, receives a real GitLab MR webhook, creates a K8s Job, and the Job record is visible via `GET /agents`.
-
----
-
-### Phase 2 — Core Agent Worker
-
-**Goal:** A worker pod that boots, runs the `Agent` loop against a real GitLab project, and reports completion back to the gateway.
-
-**Scope:**
-- `worker/tools/toolkit_base.py` — `ProviderToolkit` ABC
-- `providers/gitlab/toolkit.py` — GitLab `ProviderToolkit` implementation, all seven tools wrapping `RepositoryProvider`
-- `worker/tools/toolkit_factory.py` — `get_toolkit()` factory function
-- `worker/agent_runner.py` — job mode only (no session mode yet)
-- `worker/main.py` — reads env vars, calls `run_agent`
-- `gateway/main.py` — add `POST /internal/jobs/{id}/status` endpoint
-- `Dockerfile.worker`
-
-**Tests to write first:**
-- Unit: each `GitLabProvider` method — mock `python-gitlab`; assert correct API calls and that return values are shared model instances (`FileContent`, `CommitResult`, `MRResult`), not SDK types
-- Unit: `GitLabProvider.commit_file` falls back to `create` when `update` raises `GitlabGetError`
-- Unit: each `GitLabToolkit` tool's `execute` function calls the correct `RepositoryProvider` method with correct arguments — mock `RepositoryProvider`, not `python-gitlab` directly
-- Unit: `get_toolkit()` returns `GitLabToolkit` when `PROVIDER=gitlab`
-- Unit: `build_system_prompt` includes the task type string
-- Unit: `build_task_message` produces correct strings for all three task types; default case for unknown task
-- Unit: `Agent` calls LLM with correct message history and tool schemas
-- Unit: `Agent` executes tool calls and appends results to conversation history
-- Unit: `Agent` loops until LLM returns a response with no tool calls
-- Unit: `Agent.steer()` message is injected after the current tool, before remaining tools in the same turn
-- Unit: `Agent.follow_up()` message is injected only after the agent is fully idle
-- Unit: `Agent` calls `event_handler` in correct order: llm_query -> llm_response -> gas_updated -> tool_call -> tool_result (repeat) -> complete
-- Unit: `Agent` emits `out_of_gas` and suspends when `gas_used_input >= gas_limit_input` or `gas_used_output >= gas_limit_output` before the next LLM call
-- Unit: `Agent.add_gas(input_amount=N)` increments `gas_limit_input` and resumes the suspended loop
-- Unit: `Agent.add_gas(output_amount=N)` increments `gas_limit_output` and resumes the suspended loop
-- Unit: gas is checked before each LLM call, not mid-tool — tool execution is never interrupted by an out-of-gas condition
-- Unit: `run_agent` constructs `Agent` with correct arguments — mock `Agent.run`
-- Integration: `POST /internal/jobs/{id}/status` with `{"status": "completed"}` updates DB and returns 200; unknown job ID returns 404
-- Integration: worker `main.py` reads `TASK`, `PROJECT_ID`, `TASK_CONTEXT` env vars and calls `run_agent` with correct arguments
-- E2E (staging): trigger a `review_mr` job against a test GitLab project; verify agent posts a comment on the MR
-
-**Definition of done:** End-to-end webhook → worker → GitLab comment flow works against a real project.
-
----
-
-### Phase 3 — Structured Logging and Observability
-
-**Goal:** Every agent run emits typed log events that are persisted in the gateway and visible via API.
-
-**Scope:**
-- `shared/models.py` — add `LogEvent`
-- `gateway/db.py` — add `log_events` table; `append_log_event`, `get_log_events`
-- `gateway/main.py` — add `POST /internal/log`, `GET /agents/{id}/logs`, `GET /agents/{id}/logs/stream` (SSE)
-- `worker/agent_logger.py` — `AgentEvent` handler; emits all six event types to the gateway
-- `Agent` already calls `event_handler` for every event; pass `AgentLogger.handle_event` as the handler — no changes to `Agent` or `agent_runner.py` required
-
-**Tests to write first:**
-- Unit: `AgentLogger` emits `llm_query` before LLM call with correct `messages`, `model`, `tools` payload
-- Unit: `AgentLogger` emits `llm_response` after LLM call with `content`, `tool_calls`, token counts
-- Unit: `AgentLogger` emits `tool_call` before tool execution with `tool_name`, `arguments`
-- Unit: `AgentLogger` emits `tool_result` after tool execution with `tool_name`, `result`, `duration_ms`
-- Unit: `AgentLogger` emits `complete` on clean exit with aggregate counts
-- Unit: `AgentLogger` emits `error` with `message` and `traceback` when an exception is raised
-- Unit: `AgentLogger` fire-and-forget HTTP — a slow gateway response does not block agent execution; timeout is enforced
-- Unit: `LogEvent` sequence numbers are monotonically increasing across concurrent emits
-- Unit: `db.py` — `append_log_event`, `get_log_events` ordered by sequence
-- Integration: `POST /internal/log` persists a `LogEvent` and returns 200; malformed payload returns 422
-- Integration: `GET /agents/{id}/logs` returns all events for a job in sequence order
-- Integration: `GET /agents/{id}/logs/stream` — connect SSE client; post log events via internal endpoint; assert events are received in order with correct `event_type` fields
-- E2E (staging): run a full agent job; assert all six event types appear in `GET /agents/{id}/logs`
-
-**Definition of done:** A completed agent job has a full structured execution trace retrievable via API and streamable via SSE.
-
----
-
-### Phase 4 — Project Configuration
-
-**Goal:** Projects can place a `.agents/config.yaml` in their repo and the agent will use their custom skills, tools, prompt, and image.
-
-**Scope:**
-- `shared/models.py` — add `SkillDef`, `ToolDef`, `ProjectConfig`, `AgentConfig`
-- `gateway/config_loader.py` — full implementation: fetch, parse, merge, Kaniko build
-- `global-config/` — base `agent-config.yml`, initial skills and tools directories
-- Update `gateway/kube_client.py` to accept `AgentConfig` and use resolved image + prompt
-- Update `gateway/main.py` — call config loader before spawning every job
-- `AGENT_CONFIG_DIR` env var wired through gateway Deployment manifest
-
-**Tests to write first:**
-- Unit: `config_loader` returns global defaults when project has no `.agents/config.yaml`
-- Unit: `config_loader` returns global defaults (with warning log) when `.agents/config.yaml` is malformed YAML
-- Unit: `config_loader` returns global defaults (with warning log) when `.agents/config.yaml` fails Pydantic validation
-- Unit: skill merging — project skills are appended after global skills; duplicates (by name) are deduplicated, keeping the project definition
-- Unit: tool merging — same deduplication behaviour as skills
-- Unit: `prompt_mode: append` — project prompt is appended to global base with a newline separator
-- Unit: `prompt_mode: override` — project prompt completely replaces global base
-- Unit: `AGENT_CONFIG_DIR` env var changes the path used to fetch config (default `.agents`)
-- Unit: Kaniko cache key is `f"{project_id}-{dockerfile_blob_sha}"`; same key returns cached image without spawning a build Job
-- Unit: Kaniko job is spawned when cache key is absent; returned image tag follows the expected pattern
-- Unit: config is fetched at event commit SHA, not HEAD
-- Integration: spawn a job for a project with a valid `.agents/config.yaml`; assert `AgentConfig` passed to `kube_client` has merged skills/tools and composed prompt
-- Integration: spawn a job for a project with a custom Dockerfile; assert Kaniko Job is created; after mock completion, assert derived image tag is used in worker Job manifest
-- E2E (staging): create a test project with a `.agents/config.yaml` adding a custom skill; trigger an agent run; verify custom skill is available in the worker
-
-**Definition of done:** A project with `.agents/config.yaml` runs an agent with its custom configuration; a project without the file runs identically to Phase 2/3.
-
----
-
-### Phase 5 — Authentication
-
-**Goal:** The dashboard and API are accessible only to authenticated GitLab users who are members of the configured group.
-
-**Scope:**
-- `k8s/oauth2-proxy-deployment.yaml`
-- `k8s/ingress.yaml` — split routing (webhook/internal bypass, everything else through proxy)
-- `k8s/secrets.yaml` — add `oauth2-proxy-creds` secret
-- `gateway/main.py` — call `auth_provider.extract_user(headers)` on every authenticated request; attach `UserIdentity.username` to `JobRecord` and `SessionRecord`
-- `gateway/main.py` — add `GET /internal/oauth2-proxy-config` endpoint
-- GitLab OAuth2 application setup (documented steps)
-
-**Tests to write first:**
-- Integration: requests to `/` without a valid session cookie are redirected to GitLab OAuth2 login
-- Integration: requests to `/webhook/gitlab` bypass oauth2-proxy and reach the gateway directly (no redirect)
-- Integration: requests to `/internal/log` bypass oauth2-proxy and reach the gateway directly
-- Integration: `POST /trigger` with valid session calls `auth_provider.extract_user()` and sets `triggered_by` on `JobRecord` to the returned `username`
-- Integration: `POST /trigger` without forwarded headers (direct cluster call) sets `triggered_by` to `"system"`
-- Integration: `GET /internal/oauth2-proxy-config` returns correct CLI args for `GitLabAuthProvider`
-- Unit: gateway uses `auth_provider.extract_user()` and never directly reads `X-Forwarded-User` header — enforced by asserting no string literal `'X-Forwarded-User'` appears outside `providers/`
-- E2E (staging): log in via GitLab OAuth; assert dashboard is accessible; log out; assert redirect to login
-
-**Definition of done:** Dashboard requires GitLab login; webhook and internal endpoints are unaffected; operator identity is recorded on manual triggers.
-
----
-
-### Phase 6 — Control Plane Dashboard
-
-**Goal:** A fully functional browser dashboard for monitoring jobs, viewing history, and inspecting execution traces.
-
-**Scope:**
-- `dashboard/index.html` — full React SPA
-  - Active agents view (polling or SSE-driven job list)
-  - History view (paginated, filterable, searchable)
-  - Log panel (SSE live stream for active jobs, full replay for history)
-  - Cancel and retry actions
-  - Gas meter per job/session card (live via SSE)
-  - Out-of-gas banner with top-up input and Add Gas button
-
-**Tests to write first:**
-- Unit (React): `StatusPill` renders correct colour and pulse animation for each status value
-- Unit (React): `AgentCard` displays task type, project name, elapsed time, and most recent log line
-- Unit (React): `AgentCard` cancel button calls `POST /agents/{id}/cancel` and updates local state optimistically
-- Unit (React): `LogPanel` renders each of the six event types with distinct visual treatment
-- Unit (React): `LogPanel` auto-scrolls to bottom on new events; pauses when user scrolls up; resumes on scroll to bottom
-- Unit (React): `LogPanel` fetches full log history via `GET /agents/{id}/logs` for completed jobs
-- Unit (React): `HistoryRow` retry button is visible only for `failed` jobs; calls `POST /trigger` with original context
-- Unit (React): history search filters rows by project name and task type; status filter works independently
-- Integration: `POST /agents/{id}/cancel` deletes the K8s Job and sets DB status to `cancelled`
-- Integration: `POST /agents/{id}/gas` increments specified limit(s) in DB and calls internal add-gas endpoint; returns updated gas state
-- Integration: `POST /agents/{id}/gas` on a non-`out_of_gas` job still increments limit(s) (pre-emptive top-up) without triggering a resume
-- Unit (React): gas meters render correct fill ratios from `gas_used_input / gas_limit_input` and `gas_used_output / gas_limit_output`
-- Unit (React): exhausted gas meter turns amber and out-of-gas banner appears when status is `out_of_gas`
-- Unit (React): Add Gas button calls `POST /agents/{id}/gas` with `{"input_amount": N, "output_amount": M}` and optimistically updates meters
-- E2E (browser): navigate to dashboard; verify active jobs appear; expand log panel; verify events stream in; cancel a job; verify status updates
-
-**Definition of done:** Operators can monitor all agent activity, inspect full execution traces, cancel running jobs, and retry failed ones entirely from the browser.
-
----
-
-### Phase 7 — Interactive Sessions
-
-**Goal:** Users can launch an ad hoc agent session against any GitLab project they have access to, converse with it in real time, steer it mid-run, and have the agent ask clarifying questions.
-
-**Scope:**
-- `shared/models.py` — add `SessionContext`, `SessionMessage`, `SessionRecord`
-- `shared/models.py` — add `input_request`, `input_received`, `interrupted` log event types
-- `gateway/db.py` — add `sessions` and `session_messages` tables
-- `gateway/session_broker.py` — full implementation
-- `gateway/main.py` — all session endpoints, project proxy endpoints, internal session endpoints
-- `worker/agent_runner.py` — session mode (interrupt check, input suspension)
-- `dashboard/index.html` — session launcher, session workspace (split-pane conversation + trace)
-
-This phase has the most internal dependencies and should be implemented in the following sub-order:
-
-**7a — Session data layer and broker**
-- DB schema and methods for sessions and messages
-- `session_broker.py` core: queue management, state transitions, `send_to_agent`, `await_user_input`, `check_interrupt`
-- Session CRUD endpoints: `POST /sessions`, `GET /sessions`, `GET /sessions/{id}`, `GET /sessions/{id}/messages`
-- Internal session endpoints: `POST /internal/sessions/{id}/await-input`, `POST /internal/sessions/{id}/interrupt-check`
-
-**7b — Worker session mode**
-- Update `agent_runner.py` with session mode branch — wire `Agent.steer()` and `Agent.follow_up()` to the broker endpoints
-- Update `AgentLogger` with `input_request`, `input_received`, `interrupted` event types
-- `GET /sessions/{id}/stream` SSE endpoint (interleaved messages and log events)
-
-**7c — Session messaging**
-- `POST /sessions/{id}/messages` endpoint
-- End-to-end test: full session lifecycle via API only (no UI)
-
-**7d — GitLab proxy endpoints and session launcher UI**
-- `GET /projects/search`, `GET /projects/{id}/branches`, `GET /projects/{id}/mrs`
-- Session launcher form in dashboard
-
-**7e — Session workspace UI**
-- Split-pane workspace: conversation thread + execution trace
-- Context-aware input (waiting vs redirect mode)
-- Session header bar with status and cancel
-
-**Tests to write first (7a):**
-- Unit: `session_broker.send_to_agent` enqueues a message and transitions `waiting_for_user → running`
-- Unit: `session_broker.await_user_input` transitions session to `waiting_for_user`; blocks until message enqueued; returns message content
-- Unit: `session_broker.check_interrupt` returns pending interrupt and clears it; returns `None` when none pending
-- Unit: `session_broker` cleans up queue on terminal state transition
-- Unit: `db.py` — session and message CRUD round-trips correctly
-- Integration: `POST /sessions` creates a `SessionRecord` in `configuring` status, spawns K8s Job with `SESSION_ID` env var
-- Integration: `POST /internal/sessions/{id}/await-input` blocks until `POST /sessions/{id}/messages` is called; returns message content
-- Integration: `POST /internal/sessions/{id}/interrupt-check` returns pending interrupt; returns empty on second call
-
-**Tests to write first (7b):**
-- Unit: worker in session mode calls `interrupt-check` at the start of each loop iteration
-- Unit: worker injects interrupt message into LLM context when interrupt is returned
-- Unit: worker calls `await-input` when agent emits `input_request`; LLM context updated with response on resume
-- Unit: `AgentLogger` emits `input_request` event with question payload
-- Unit: `AgentLogger` emits `input_received` event with response payload
-- Unit: `AgentLogger` emits `interrupted` event with redirect message payload
-- Integration: `GET /sessions/{id}/stream` SSE delivers `SessionMessage` and `LogEvent` records interleaved in arrival order
-
-**Tests to write first (7c–7e):**
-- Integration: full session lifecycle via API — create session, simulate worker calling await-input, send user message, verify session resumes, verify complete status
-- Integration: `GET /projects/search` returns only projects the authenticated user can access (mock GitLab API)
-- Unit (React): session launcher project search calls `/projects/search` on input; renders results with namespace
-- Unit (React): branch selector populates from `/projects/{id}/branches`; defaults to default branch
-- Unit (React): conversation thread renders user and agent messages with correct alignment and `message_type` labels
-- Unit (React): input box label changes between "Redirect the agent" (running) and "Agent is waiting for your answer" (waiting_for_user)
-- Unit (React): input is disabled when session is in terminal state
-- E2E (browser + staging): launch a session against a test project; send initial goal; receive agent response; send interrupt; verify agent redirects; agent asks question; send answer; session completes
-
-**Definition of done:** A user can launch a session from the browser, have a real conversation with an agent running against their GitLab project, steer it mid-run, answer its questions, and see the full execution trace alongside the conversation — with no local setup required.
-
----
-
-### Phase 8 — Additional Auth and Repository Providers (Deferred)
-
-**Goal:** Extend the system to support additional repository providers (GitHub, Bitbucket, etc.) and additional IdPs (GitHub OAuth, Keycloak/OIDC, Okta), each slotting into the existing abstraction without changes to the gateway, worker, dashboard, or session broker.
-
-**Scope (per new provider added):**
-- `providers/{name}/provider.py` — implement all `RepositoryProvider` abstract methods
-- `providers/{name}/webhook.py` — implement `verify_webhook` and `parse_webhook_event`
-- `providers/{name}/toolkit.py` — implement `ProviderToolkit`
-- `providers/{name}/auth.py` — implement `AuthProvider` (`oauth_proxy_config` + `extract_user`)
-- Register new cases in `providers/registry.py` and `providers/auth_registry.py`
-- Add provider-specific credential env vars to the K8s Secret and gateway Deployment manifest
-- For OIDC IdPs: implement `providers/auth_oidc.py` — `OIDCAuthProvider` using `--provider=oidc` and `X-Auth-Request-*` headers
-
-**No changes required to:** `event_mapper.py`, `agent_runner.py`, `config_loader.py`, `session_broker.py`, `kube_client.py`, `db.py`, or any dashboard code.
-
-**Tests follow the same pattern as Phase 0** — one set of provider unit tests and one set of auth unit tests per new provider, plus integration tests for the webhook path and a full E2E test for the session launcher showing projects from the new provider appearing alongside GitLab projects.
-
----
-
-### Phase Summary
-
-| Phase | Deliverable | External dependency |
-|---|---|---|
-| 0 | Provider abstraction layer (`providers/base.py`, `GitLabProvider`, registry) | None (pure Python) |
-| 1 | Gateway + K8s Job spawning | Kubernetes cluster, provider webhook |
-| 2 | Working agent worker | GitLab API, OpenAI-compatible LLM |
-| 3 | Structured logging + SSE | None (internal) |
-| 4 | Per-project configuration | GitLab API (config fetch), container registry (Kaniko) |
-| 5 | Authentication | GitLab OAuth2 application |
-| 6 | Control plane dashboard | None (consumes existing API) |
-| 7 | Interactive sessions | All prior phases |
-| 8 | Additional providers + IdPs (deferred) | Per-provider credentials |
-
-Each phase is a mergeable increment. Phase 0 must be completed first as all subsequent phases depend on the provider abstraction. Phases 1–3 can then be developed largely in parallel by different engineers. Phase 4 depends on Phase 1. Phase 5 depends on Phase 1. Phase 6 depends on Phases 1–3 and 5. Phase 7 depends on all prior phases.
-
----
 
 ## Extending the Integration
 
@@ -2120,7 +1795,7 @@ No changes to the Kubernetes manifests or job spawner are required for most exte
 
 **Adding a new provider** (e.g. GitHub) follows a fixed, contained pattern:
 
-For the `AuthProvider` (see Phase 8 for deferred implementations):
+For the `AuthProvider`:
 1. Implement `AuthProvider` in `providers/{name}/auth.py` — `oauth_proxy_config()` with the correct `--provider` flag and restriction flags, and `extract_user()` mapping the IdP's header names to `UserIdentity`
 2. Register it in `providers/auth_registry.py`
 3. Add `AUTH_PROVIDER={name}` and credential env vars to the K8s Secret and gateway Deployment
