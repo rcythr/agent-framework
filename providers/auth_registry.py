@@ -21,8 +21,5 @@ def get_auth_provider() -> AuthProvider:
         case "gitea":
             from providers.gitea.auth import GiteaAuthProvider
             return GiteaAuthProvider()
-        case "oidc":
-            from providers.auth_oidc import OIDCAuthProvider
-            return OIDCAuthProvider()
         case _:
             raise ValueError(f"Unknown auth provider: {auth_provider_name!r}")

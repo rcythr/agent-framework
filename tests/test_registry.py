@@ -94,15 +94,6 @@ def test_get_auth_provider_returns_gitea_auth_provider():
         assert isinstance(provider, GiteaAuthProvider)
 
 
-def test_get_auth_provider_returns_oidc_auth_provider():
-    with patch.dict(os.environ, {"AUTH_PROVIDER": "oidc"}, clear=False):
-        from importlib import reload
-        import providers.auth_registry as reg
-        reload(reg)
-        from providers.auth_oidc import OIDCAuthProvider
-        provider = reg.get_auth_provider()
-        assert isinstance(provider, OIDCAuthProvider)
-
 
 def test_get_auth_provider_falls_back_to_provider_env():
     env = {"PROVIDER": "gitlab"}
