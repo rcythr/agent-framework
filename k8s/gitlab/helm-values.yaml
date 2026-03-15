@@ -1,0 +1,74 @@
+global:
+  hosts:
+    domain: localhost
+    externalIP: 127.0.0.1
+    https: false
+    gitlab:
+      name: gitlab.localhost
+      https: false
+  ingress:
+    class: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    tls:
+      enabled: false
+  # Use a fixed initial root password via a pre-created secret
+  initialRootPassword:
+    secret: gitlab-root-password
+    key: password
+
+# Disable components not needed for local dev
+gitlab-runner:
+  install: false
+registry:
+  enabled: false
+prometheus:
+  install: false
+grafana:
+  enabled: false
+certmanager:
+  install: false
+nginx-ingress:
+  enabled: false   # we use the KIND nginx ingress instead
+gitlab-zoekt:
+  install: false
+
+# Trim resource requests so GitLab fits in a local cluster
+gitlab:
+  webservice:
+    minReplicas: 1
+    maxReplicas: 1
+    resources:
+      requests:
+        cpu: 300m
+        memory: 1.5Gi
+  sidekiq:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+  gitaly:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 200Mi
+  gitlab-shell:
+    enabled: false   # no SSH needed
+
+postgresql:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+redis:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+minio:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi

@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pi-agent-gateway
+  namespace: pi-agents
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pi-agent-gateway
+  template:
+    metadata:
+      labels:
+        app: pi-agent-gateway
+    spec:
+      serviceAccountName: pi-agent-gateway
+      containers:
+        - name: gateway
+          image: localhost:5001/pi-agent-gateway:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          env:
+            - name: PROVIDER
+              value: "gitlab"
+            - name: GITLAB_URL
+              value: "http://gitlab-webservice-default.gitlab.svc.cluster.local:8080"
+            - name: GITLAB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-creds
+                  key: token
+            - name: GITLAB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-creds
+                  key: webhook-secret
+            - name: PI_AGENT_IMAGE
+              value: "localhost:5001/pi-agent-worker:latest"
+            - name: PI_AGENT_NAMESPACE
+              value: "pi-agents"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pi-agent-gateway
+  namespace: pi-agents
+spec:
+  selector:
+    app: pi-agent-gateway
+  ports:
+    - port: 80
+      targetPort: 3000
