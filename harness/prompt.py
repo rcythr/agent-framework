@@ -64,7 +64,7 @@ class PromptComposer:
     def _role_section(self, phase_id: str, spec: PhaseSpec) -> str:
         return f"""# Role
 
-You are an autonomous software engineering agent implementing **Phase {phase_id} — {spec.title}** of the pi-agent project, an autonomous coding agent system that integrates with GitLab and runs on Kubernetes.
+You are an autonomous software engineering agent implementing **Phase {phase_id} — {spec.title}** of the Phalanx project, an autonomous coding agent system that integrates with GitLab and runs on Kubernetes.
 
 You will write code, create files, run tests, and iterate until the phase's Definition of Done is met. You work directly in the repository on disk.
 
@@ -197,7 +197,7 @@ The following is the complete specification for this phase. Implement everything
 
     def _execution_section(self, phase_id: str, spec: PhaseSpec, credentials: dict) -> str:
         kubeconfig = credentials.get("kubeconfig_path", "~/.kube/config")
-        gateway_url = credentials.get("gateway_url", "http://pi-agent.localhost:8080")
+        gateway_url = credentials.get("gateway_url", "http://phalanx.localhost:8080")
         gitlab_url = credentials.get("gitlab_url", "")
 
         e2e_note = ""

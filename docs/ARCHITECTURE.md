@@ -76,7 +76,7 @@ Provider ──webhook/API──▶ Pi Agent Gateway (persistent K8s Deployment)
 ## Project Structure
 
 ```
-pi-agent-gitlab/
+phalanx/
 ├── gateway/
 │   ├── main.py              # FastAPI server: webhooks, triggers, dashboard API, SSE, session endpoints
 │   ├── kube_client.py       # K8s Job spawner
@@ -194,9 +194,11 @@ class JobRecord(BaseModel):
     context: dict[str, Any]
     started_at: datetime
     finished_at: datetime | None = None
-    gas_limit: int = 100_000      # token budget allocated to this job
-    gas_used: int = 0             # tokens consumed so far (input + output)
-    gas_topups: list[int] = []    # record of each top-up amount
+    gas_limit: int = 100_000          # token budget allocated to this job
+    gas_used: int = 0                 # total tokens consumed (input + output)
+    gas_used_input: int = 0           # input tokens consumed so far
+    gas_used_output: int = 0          # output tokens consumed so far
+    gas_topups: list[int] = []        # record of each top-up amount
 
 class SkillDef(BaseModel):
     name: str
@@ -252,7 +254,7 @@ class SessionMessage(BaseModel):
 class SessionRecord(BaseModel):
     """Persistent record of an interactive agent session."""
     id: str
-    owner: str                      # Normalised username from AuthProvider.extract_user(headers)
+    owner: str                        # Normalised username from AuthProvider.extract_user(headers)
     project_id: int
     project_path: str
     branch: str
@@ -261,9 +263,11 @@ class SessionRecord(BaseModel):
     context: SessionContext
     created_at: datetime
     finished_at: datetime | None = None
-    gas_limit: int = 100_000      # token budget for this session
-    gas_used: int = 0             # tokens consumed so far (input + output)
-    gas_topups: list[int] = []    # record of each top-up amount
+    gas_limit: int = 100_000          # token budget for this session
+    gas_used: int = 0                 # total tokens consumed (input + output)
+    gas_used_input: int = 0           # input tokens consumed so far
+    gas_used_output: int = 0          # output tokens consumed so far
+    gas_topups: list[int] = []        # record of each top-up amount
 ```
 
 **`LogEvent.payload` shapes by event type:**
@@ -279,7 +283,7 @@ class SessionRecord(BaseModel):
 | `input_request` | `question: str` |
 | `input_received` | `response: str` |
 | `interrupted` | `redirect_message: str` |
-| `gas_updated` | `gas_used: int`, `gas_limit: int`, `tokens_this_call: int` |
+| `gas_updated` | `gas_used: int`, `gas_limit: int`, `input_tokens: int`, `output_tokens: int` |
 | `out_of_gas` | `gas_used: int`, `gas_limit: int` |
 
 ---

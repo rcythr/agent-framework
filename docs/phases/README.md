@@ -153,15 +153,15 @@ Phase 4 is not on the critical path — it can be slotted in any time between Ph
 
 | File | Phase |
 |---|---|
-| `phase-0-provider-abstraction.md` | Phase 0 — Provider Abstraction Layer |
-| `phase-1-infrastructure.md` | Phase 1 — Infrastructure Foundation |
-| `phase-2-agent-worker.md` | Phase 2 — Core Agent Worker |
-| `phase-3-structured-logging.md` | Phase 3 — Structured Logging and Observability |
-| `phase-4-project-configuration.md` | Phase 4 — Per-Project Configuration |
-| `phase-5-authentication.md` | Phase 5 — Authentication |
-| `phase-6-dashboard.md` | Phase 6 — Control Plane Dashboard |
-| `phase-7-interactive-sessions.md` | Phase 7 — Interactive Sessions (sub-tasks 7a–7e) |
-| `phase-8-additional-providers.md` | Phase 8 — Additional Providers (Deferred) |
+| `phase0-provider-abstraction.md` | Phase 0 — Provider Abstraction Layer |
+| `phase1-infrastructure.md` | Phase 1 — Infrastructure Foundation |
+| `phase2-agent-worker.md` | Phase 2 — Core Agent Worker |
+| `phase3-structured-logging.md` | Phase 3 — Structured Logging and Observability |
+| `phase4-project-configuration.md` | Phase 4 — Per-Project Configuration |
+| `phase5-authentication.md` | Phase 5 — Authentication |
+| `phase6-dashboard.md` | Phase 6 — Control Plane Dashboard |
+| `phase7-iteractive-sessions.md` | Phase 7 — Interactive Sessions (sub-tasks 7a–7e) |
+| `phase8-additional-auth.md` | Phase 8 — Additional Providers (Deferred) |
 
 ---
 

@@ -72,10 +72,10 @@ Tools to implement:
 1. `get_file` — calls `provider.get_file(project_id, path, ref)`
 2. `commit_file` — calls `provider.commit_file(project_id, branch, path, content, message)`
 3. `create_mr` — calls `provider.create_mr(project_id, source_branch, target_branch, title, description)`
-4. `post_comment` — calls `provider.post_comment(project_id, mr_iid, body)`
+4. `post_mr_comment` — calls `provider.post_mr_comment(project_id, mr_iid, body)`
 5. `post_inline_comment` — calls `provider.post_inline_comment(project_id, mr_iid, path, line, body)`
 6. `get_mr_diff` — calls `provider.get_mr_diff(project_id, mr_iid)`
-7. `set_pipeline_status` — calls `provider.set_pipeline_status(project_id, sha, state, description)`
+7. `update_pipeline_status` — calls `provider.update_pipeline_status(project_id, sha, state, description)`
 
 ### `worker/tools/toolkit_factory.py`
 ```python

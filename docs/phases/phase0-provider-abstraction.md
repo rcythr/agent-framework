@@ -21,10 +21,10 @@ Define the `RepositoryProvider` abstract base class with all abstract methods:
 - `get_file_at_sha(project_id, path, sha)` → `FileContent | None`
 - `commit_file(project_id, branch, path, content, message)` → `CommitResult`
 - `create_mr(project_id, source_branch, target_branch, title, description)` → `MRResult`
-- `post_comment(project_id, mr_iid, body)` → `None`
+- `post_mr_comment(project_id, mr_iid, body)` → `None`
 - `post_inline_comment(project_id, mr_iid, path, line, body)` → `None`
 - `get_mr_diff(project_id, mr_iid)` → `str`
-- `set_pipeline_status(project_id, sha, state, description)` → `None`
+- `update_pipeline_status(project_id, sha, state, description)` → `None`
 - `search_projects(query, user_token)` → `list[dict]`
 - `list_branches(project_id, user_token)` → `list[str]`
 - `list_open_mrs(project_id, user_token)` → `list[MergeRequest]`
