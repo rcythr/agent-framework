@@ -8,7 +8,7 @@ Establish the provider abstraction layer that all subsequent phases depend on. T
 ### `shared/models.py` (initial)
 Define the following Pydantic models:
 - `TaskSpec` — `task: str`, `project_id: int`, `context: dict[str, Any]`
-- `JobRecord` — `id`, `task`, `project_id`, `project_name`, `status` (Literal), `context`, `started_at`, `finished_at`, `gas_limit`, `gas_used`, `gas_topups`
+- `JobRecord` — `id`, `task`, `project_id`, `project_name`, `status` (Literal), `context`, `started_at`, `finished_at`, `gas_limit_input`, `gas_limit_output`, `gas_used_input`, `gas_used_output`, `gas_topups`
 - `LogEvent` — `job_id`, `sequence`, `timestamp`, `event_type` (Literal of all event types), `payload`
 - `SkillDef`, `ToolDef`, `ProjectConfig`, `AgentConfig`
 - `SessionContext`, `SessionMessage`, `SessionRecord`
@@ -21,10 +21,10 @@ Define the `RepositoryProvider` abstract base class with all abstract methods:
 - `get_file_at_sha(project_id, path, sha)` → `FileContent | None`
 - `commit_file(project_id, branch, path, content, message)` → `CommitResult`
 - `create_mr(project_id, source_branch, target_branch, title, description)` → `MRResult`
-- `post_comment(project_id, mr_iid, body)` → `None`
+- `post_mr_comment(project_id, mr_iid, body)` → `None`
 - `post_inline_comment(project_id, mr_iid, path, line, body)` → `None`
 - `get_mr_diff(project_id, mr_iid)` → `str`
-- `set_pipeline_status(project_id, sha, state, description)` → `None`
+- `update_pipeline_status(project_id, sha, state, description)` → `None`
 - `search_projects(query, user_token)` → `list[dict]`
 - `list_branches(project_id, user_token)` → `list[str]`
 - `list_open_mrs(project_id, user_token)` → `list[MergeRequest]`
@@ -32,6 +32,8 @@ Define the `RepositoryProvider` abstract base class with all abstract methods:
 - `parse_webhook_event(headers, body)` → `PushEvent | MREvent | CommentEvent | None`
 
 Also define all shared data models: `FileContent`, `CommitResult`, `MRResult`, `MergeRequest`, `Commit`, `PushEvent`, `MREvent`, `CommentEvent`.
+
+`PushEvent`, `MREvent`, and `CommentEvent` must each include an `actor: str` field holding the username of the user who triggered the event. This field is extracted from the webhook payload by the provider implementation and is used by the gateway to enforce per-project `allowed_users` access control.
 
 ### `providers/auth_base.py`
 Define:
@@ -92,7 +94,7 @@ pyyaml>=6.0.1
 ## Tests to Write First (TDD)
 
 ### Unit tests — `providers/gitlab/provider.py`
-- `GitLabProvider.parse_webhook_event` maps all three raw GitLab payloads to correct shared event models
+- `GitLabProvider.parse_webhook_event` maps all three raw GitLab payloads to correct shared event models, including the `actor` field populated from the webhook payload's user info
 - `GitLabProvider.parse_webhook_event` returns `None` for unknown event types
 - `GitLabProvider.verify_webhook` returns `True` for valid HMAC signature
 - `GitLabProvider.verify_webhook` returns `False` for invalid signature

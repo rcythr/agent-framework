@@ -24,7 +24,8 @@ class SessionContext(BaseModel):
     mr_iid: int | None = None
     skill_overrides: list[str] = []
     tool_overrides: list[str] = []
-    gas_limit: int = 100_000
+    gas_limit_input: int = 160_000
+    gas_limit_output: int = 40_000
 
 class SessionMessage(BaseModel):
     session_id: str
@@ -51,9 +52,11 @@ class SessionRecord(BaseModel):
     context: SessionContext
     created_at: datetime
     finished_at: datetime | None = None
-    gas_limit: int = 100_000
-    gas_used: int = 0
-    gas_topups: list[int] = []
+    gas_limit_input: int = 160_000
+    gas_limit_output: int = 40_000
+    gas_used_input: int = 0
+    gas_used_output: int = 0
+    gas_topups: list[dict] = []  # each entry: {"input": N, "output": M}
 ```
 
 Also add `input_request`, `input_received`, `interrupted` to `LogEvent.event_type` Literal in `shared/models.py` if not already present.
@@ -119,8 +122,8 @@ Internal session endpoints (no auth, cluster-only):
 Session gas endpoints:
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/sessions/{id}/gas` | Add gas to a session; body: `{"amount": N}` |
-| `GET` | `/sessions/{id}/gas` | Return `gas_used`, `gas_limit`, `topup_history` |
+| `POST` | `/sessions/{id}/gas` | Add gas to a session; body: `{"input_amount": N, "output_amount": M}` (either optional) |
+| `GET` | `/sessions/{id}/gas` | Return `gas_used_input`, `gas_used_output`, `gas_limit_input`, `gas_limit_output`, `topup_history` |
 
 ### Tests (7a)
 - Unit: `session_broker.send_to_agent` enqueues a message and transitions `waiting_for_user → running`
@@ -210,7 +213,7 @@ Add the **New Session** launcher form (replacing the Phase 6 placeholder):
 - **Target MR** (optional) — dropdown from `GET /projects/{id}/mrs`
 - **Skill / tool overrides** — multi-select from project's resolved `AgentConfig`
 - **Goal** — large free-text area for initial instruction
-- **Gas limit** — numeric input, defaults to `DEFAULT_SESSION_GAS_LIMIT`
+- **Gas limits** — two numeric inputs (input tokens / output tokens), defaulting to `DEFAULT_SESSION_INPUT_GAS_LIMIT` and `DEFAULT_SESSION_OUTPUT_GAS_LIMIT`
 - **Launch** button — calls `POST /sessions`; on success, transitions to Session Workspace
 
 ### Tests (7d)

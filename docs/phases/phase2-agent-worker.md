@@ -24,23 +24,27 @@ class Agent:
         tools: list[dict],
         system_prompt: str,
         event_handler: Callable[[AgentEvent], Awaitable[None]],
-        gas_limit: int = 100_000,
+        gas_limit_input: int = 80_000,
+        gas_limit_output: int = 20_000,
     ): ...
 
     async def run(self, initial_message: str) -> None: ...
-    def steer(self, message: str) -> None: ...      # inject into steering queue
-    def follow_up(self, message: str) -> None: ...  # inject into follow-up queue
-    def add_gas(self, amount: int) -> None: ...     # increment gas_limit, unblock loop
-    
+    def steer(self, message: str) -> None: ...                          # inject into steering queue
+    def follow_up(self, message: str) -> None: ...                      # inject into follow-up queue
+    def add_gas(self, input_amount: int = 0, output_amount: int = 0) -> None: ...  # increment limit(s), unblock loop
+
     @property
-    def gas_used(self) -> int: ...
+    def gas_used_input(self) -> int: ...
+
+    @property
+    def gas_used_output(self) -> int: ...
 ```
 
 **Loop behaviour:**
-1. Before each LLM call: check `gas_used >= gas_limit`; if so, emit `out_of_gas` and `await self._gas_event.wait()`
+1. Before each LLM call: check `gas_used_input >= gas_limit_input` or `gas_used_output >= gas_limit_output`; if either, emit `out_of_gas` and `await self._gas_event.wait()`
 2. Call LLM with full message history and tool schemas
 3. Emit `llm_query` before the call, `llm_response` after
-4. After response: `gas_used += input_tokens + output_tokens`; emit `gas_updated`
+4. After response: `gas_used_input += input_tokens; gas_used_output += output_tokens`; emit `gas_updated`
 5. If response has tool calls: emit `tool_call`, execute, emit `tool_result`, repeat
 6. Steer queue messages are injected after the current tool finishes, before remaining tools in the same turn
 7. Follow-up queue messages are injected only after the agent is fully idle (no pending tool calls)
@@ -48,10 +52,12 @@ class Agent:
 9. Emit `complete` with aggregate stats
 
 **Gas implementation:**
-- `self._gas_used` — accumulated token count
-- `self._gas_limit` — current limit; starts at constructor arg
+- `self._gas_used_input` — accumulated input token count
+- `self._gas_used_output` — accumulated output token count
+- `self._gas_limit_input` — input token limit; starts at constructor arg
+- `self._gas_limit_output` — output token limit; starts at constructor arg
 - `self._gas_event = asyncio.Event()` — set by `add_gas()`
-- `add_gas(amount)` increments `_gas_limit` and calls `_gas_event.set()` then `_gas_event.clear()`
+- `add_gas(input_amount=0, output_amount=0)` increments the specified limit(s) and calls `_gas_event.set()` then `_gas_event.clear()`
 
 **`AgentEvent` type:**
 ```python
@@ -72,10 +78,10 @@ Tools to implement:
 1. `get_file` — calls `provider.get_file(project_id, path, ref)`
 2. `commit_file` — calls `provider.commit_file(project_id, branch, path, content, message)`
 3. `create_mr` — calls `provider.create_mr(project_id, source_branch, target_branch, title, description)`
-4. `post_comment` — calls `provider.post_comment(project_id, mr_iid, body)`
+4. `post_mr_comment` — calls `provider.post_mr_comment(project_id, mr_iid, body)`
 5. `post_inline_comment` — calls `provider.post_inline_comment(project_id, mr_iid, path, line, body)`
 6. `get_mr_diff` — calls `provider.get_mr_diff(project_id, mr_iid)`
-7. `set_pipeline_status` — calls `provider.set_pipeline_status(project_id, sha, state, description)`
+7. `update_pipeline_status` — calls `provider.update_pipeline_status(project_id, sha, state, description)`
 
 ### `worker/tools/toolkit_factory.py`
 ```python
@@ -151,8 +157,10 @@ CMD ["python", "-m", "worker.main"]
 - `Agent.steer()` message is injected after the current tool finishes, before remaining tools in the same turn
 - `Agent.follow_up()` message is injected only after the agent is fully idle
 - `Agent` calls `event_handler` in correct order: `llm_query → llm_response → gas_updated → tool_call → tool_result` (repeat) → `complete`
-- `Agent` emits `out_of_gas` and suspends when `gas_used >= gas_limit` before next LLM call
-- `Agent.add_gas(N)` increments `gas_limit` and resumes the suspended loop
+- `Agent` emits `out_of_gas` and suspends when `gas_used_input >= gas_limit_input` before next LLM call
+- `Agent` emits `out_of_gas` and suspends when `gas_used_output >= gas_limit_output` before next LLM call
+- `Agent.add_gas(input_amount=N)` increments `gas_limit_input` and resumes the suspended loop
+- `Agent.add_gas(output_amount=N)` increments `gas_limit_output` and resumes the suspended loop
 - Gas is checked before each LLM call, not mid-tool — tool execution is never interrupted
 
 ### Unit tests — `providers/gitlab/toolkit.py`

@@ -28,14 +28,19 @@ class ProjectConfig(BaseModel):
     prompt_mode: Literal["append", "override"] = "append"
     prompt: str = ""
     dockerfile: str | None = None
-    gas_limit: int | None = None  # overrides DEFAULT_JOB_GAS_LIMIT if set
+    gas_limit_input: int | None = None   # overrides DEFAULT_JOB_INPUT_GAS_LIMIT if set
+    gas_limit_output: int | None = None  # overrides DEFAULT_JOB_OUTPUT_GAS_LIMIT if set
+    allowed_users: list[str] = []        # usernames permitted to trigger webhook dispatch;
+                                         # empty list = no automatic dispatch (deny-by-default)
 
 class AgentConfig(BaseModel):
     skills: list[SkillDef]
     tools: list[ToolDef]
     system_prompt: str
     image: str
-    gas_limit: int
+    gas_limit_input: int
+    gas_limit_output: int
+    allowed_users: list[str]             # from ProjectConfig; passed to dispatch check
 ```
 
 ### `global-config/`
@@ -72,9 +77,11 @@ Full config loader implementation.
 6. Merge skills: `global_skills + project_skills`, deduplicate by `name` (project definition wins)
 7. Merge tools: same deduplication logic as skills
 8. Resolve prompt: `"append"` → concatenate global base + `\n` + project prompt; `"override"` → project prompt only
-9. Resolve `gas_limit`: use project `gas_limit` if set, else `DEFAULT_JOB_GAS_LIMIT` env var (default `100000`)
+9. Resolve `gas_limit_input`: use project value if set, else `DEFAULT_JOB_INPUT_GAS_LIMIT` env var (default `80000`)
+   Resolve `gas_limit_output`: use project value if set, else `DEFAULT_JOB_OUTPUT_GAS_LIMIT` env var (default `20000`)
 10. Resolve image: if `dockerfile` is set, run Kaniko build (see below); otherwise use `PI_AGENT_IMAGE` env var
-11. Return `AgentConfig` — no optional fields
+11. Pass through `allowed_users` from `ProjectConfig` into `AgentConfig` unchanged (no merging with global defaults — access control is purely project-defined)
+12. Return `AgentConfig` — no optional fields
 
 **Kaniko image build flow:**
 - Compute cache key: `f"{project_id}-{dockerfile_blob_sha}"` where `dockerfile_blob_sha` is the git blob SHA of the Dockerfile fetched via the provider API
@@ -87,20 +94,30 @@ Full config loader implementation.
 Update `spawn_agent_job` to accept `AgentConfig` alongside `TaskSpec`:
 - Use `agent_config.image` as the pod image (replacing the unconditional `PI_AGENT_IMAGE`)
 - Pass `agent_config.system_prompt` as `SYSTEM_PROMPT` env var
-- Pass `agent_config.gas_limit` as `GAS_LIMIT` env var
+- Pass `agent_config.gas_limit_input` as `GAS_LIMIT_INPUT` env var
+- Pass `agent_config.gas_limit_output` as `GAS_LIMIT_OUTPUT` env var
 - Pass serialised `agent_config.skills` and `agent_config.tools` as env vars or ConfigMap volume
 
-### `gateway/main.py` — wire config loader
-Before calling `kube_client.spawn_agent_job`, call `config_loader.resolve(project_id, sha)` and pass the result to the spawner. Apply to both webhook-triggered and manually-triggered jobs.
+### `gateway/main.py` — wire config loader and access control
+Before calling `kube_client.spawn_agent_job` for webhook-triggered events:
+1. Call `config_loader.resolve(project_id, sha)` to get `AgentConfig`
+2. Check `event.actor in agent_config.allowed_users`; if not, log the rejection and return HTTP 200 without spawning a job
+3. Pass `AgentConfig` to the spawner
+
+For manually-triggered jobs via `POST /trigger`, skip the `allowed_users` check — access is controlled by the dashboard authentication layer instead.
 
 ### `k8s/gateway-deployment.yaml` — add env vars
 ```yaml
 - name: AGENT_CONFIG_DIR
   value: .agents
-- name: DEFAULT_JOB_GAS_LIMIT
-  value: "100000"
-- name: DEFAULT_SESSION_GAS_LIMIT
-  value: "200000"
+- name: DEFAULT_JOB_INPUT_GAS_LIMIT
+  value: "80000"
+- name: DEFAULT_JOB_OUTPUT_GAS_LIMIT
+  value: "20000"
+- name: DEFAULT_SESSION_INPUT_GAS_LIMIT
+  value: "160000"
+- name: DEFAULT_SESSION_OUTPUT_GAS_LIMIT
+  value: "40000"
 ```
 
 ---
@@ -119,17 +136,26 @@ Before calling `kube_client.spawn_agent_job`, call `config_loader.resolve(projec
 - Config is fetched at event commit SHA, not HEAD — assert `get_file_at_sha` is called with the event SHA
 - Kaniko cache key is `f"{project_id}-{dockerfile_blob_sha}"` — same key returns cached image without spawning a build Job
 - Kaniko Job is spawned when cache key is absent; returned image tag follows expected pattern
-- Gas limit: project `gas_limit` from config is used when set
-- Gas limit: falls back to `DEFAULT_JOB_GAS_LIMIT` env var when project has no `gas_limit`
+- Gas limits: project `gas_limit_input` / `gas_limit_output` from config are used when set
+- Gas limits: fall back to `DEFAULT_JOB_INPUT_GAS_LIMIT` / `DEFAULT_JOB_OUTPUT_GAS_LIMIT` env vars when absent
+
+### Unit tests — access control
+- Webhook event with actor in `allowed_users` → job is spawned
+- Webhook event with actor NOT in `allowed_users` → no job spawned, HTTP 200 returned, rejection logged
+- `allowed_users: []` (empty list or missing config file) → no job spawned for any actor
+- `POST /trigger` (manual) bypasses `allowed_users` check regardless of actor
+- `allowed_users` list is passed through unchanged from `ProjectConfig` to `AgentConfig`
 
 ### Integration tests
 - Spawn a job for a project with a valid `.agents/config.yaml`; assert `AgentConfig` passed to `kube_client` has merged skills/tools and composed prompt
 - Spawn a job for a project with a custom Dockerfile; assert Kaniko Job is created; after mock completion, assert derived image tag is used in worker Job manifest
+- Webhook from unlisted actor returns 200 but does not create a job record in DB
 
 ### E2E test (KIND cluster)
-- Create a test project with `.agents/config.yaml` adding a custom skill
-- Trigger an agent run
+- Create a test project with `.agents/config.yaml` adding a custom skill and listing the test user in `allowed_users`
+- Trigger an agent run as the listed user
 - Verify the custom skill is present in the worker environment
+- Push a commit as an unlisted user; verify no agent job is created
 
 ---
 

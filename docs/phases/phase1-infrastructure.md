@@ -22,7 +22,7 @@ All services are accessed via the nginx ingress controller on `localhost:8080`. 
 | Service | URL | Notes |
 |---|---|---|
 | GitLab CE | `http://gitlab.localhost:8080` | Full GitLab web UI + API + webhook sender |
-| pi-agent gateway | `http://pi-agent.localhost:8080` | Gateway API and dashboard |
+| Phalanx gateway | `http://phalanx.localhost:8080` | Gateway API and dashboard |
 | Local registry | `localhost:5001` | Docker registry; reachable from host and cluster nodes |
 
 Because both GitLab and the gateway are **inside the same cluster**, GitLab can reach the gateway's webhook endpoint directly via the in-cluster Service DNS name (`http://pi-agent-gateway.pi-agents.svc.cluster.local`), with no tunnel required. This is the URL registered as the GitLab webhook.
@@ -262,7 +262,7 @@ echo "✅ Created project access token"
 # ── Register the webhook pointing at the in-cluster gateway ───────────────────
 # Gateway is reachable from within the cluster via Service DNS.
 # We register the ingress URL so it also works from the host.
-WEBHOOK_URL="http://pi-agent.localhost:8080/webhook/gitlab"
+WEBHOOK_URL="http://phalanx.localhost:8080/webhook/gitlab"
 curl -sf --request POST \
   "${GITLAB_URL}/api/v4/projects/${PROJECT_ID}/hooks" \
   --header "${AUTH}" \
@@ -293,7 +293,7 @@ EOF
 echo "✅ Test credentials written to .env.test"
 echo ""
 echo "GitLab UI:  http://gitlab.localhost:8080  (root / ${ROOT_PASSWORD})"
-echo "pi-agent:   http://pi-agent.localhost:8080"
+echo "Phalanx:    http://phalanx.localhost:8080"
 ```
 
 `.env.test` is gitignored. It is sourced by E2E tests and local dev scripts to obtain `GITLAB_TOKEN`, `GITLAB_PROJECT_ID`, etc. without hardcoding values.
@@ -393,7 +393,7 @@ GITLAB_ROOT_PASSWORD="${GITLAB_ROOT_PASSWORD}" bash scripts/seed-gitlab.sh
 echo ""
 echo "✅ Environment ready"
 echo "   GitLab:   http://gitlab.localhost:8080  (root / ${GITLAB_ROOT_PASSWORD})"
-echo "   Gateway:  http://pi-agent.localhost:8080"
+echo "   Gateway:  http://phalanx.localhost:8080"
 echo "   Test credentials: .env.test"
 ```
 
@@ -492,9 +492,11 @@ Webhook endpoint steps:
 1. Call `provider.verify_webhook(headers, body, secret)` — return 401 on failure
 2. Call `provider.parse_webhook_event(headers, body)`
 3. Call `map_event_to_task(event)` — return 200 with no body if `None`
-4. Call `kube_client.spawn_agent_job(task_spec)`
-5. Call `db.create_job(...)` with status `"pending"`
-6. Return `{"job_name": job_name}`
+4. Call `config_loader.resolve(project_id, sha)` to get `AgentConfig` (Phase 4 wires this; at Phase 1 use defaults)
+5. Check `event.actor in agent_config.allowed_users` — return 200 with no body if actor not permitted
+6. Call `kube_client.spawn_agent_job(task_spec)`
+7. Call `db.create_job(...)` with status `"pending"`
+8. Return `{"job_name": job_name}`
 
 ### `k8s/` manifests
 
@@ -506,7 +508,7 @@ Webhook endpoint steps:
   - `GITLAB_URL`: `http://gitlab-webservice-default.gitlab.svc.cluster.local:8080` (in-cluster DNS — used by the provider client inside the gateway and worker pods)
 - `k8s/rbac.yaml` — `pi-agent-gateway` ServiceAccount + `job-spawner` Role + RoleBinding; `pi-agent-worker` ServiceAccount
 - `k8s/secrets.yaml` — `llm-creds` placeholder only; `gitlab-creds` is written by `seed-gitlab.sh` at setup time and should not be committed
-- `k8s/ingress.yaml` — nginx ingress; `pi-agent.localhost` → gateway Service; `gitlab.localhost` → GitLab webservice (can be a single Ingress resource with two rules)
+- `k8s/ingress.yaml` — nginx ingress; `phalanx.localhost` → gateway Service; `gitlab.localhost` → GitLab webservice (can be a single Ingress resource with two rules)
 
 ### `Dockerfile.gateway`
 ```dockerfile
