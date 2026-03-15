@@ -182,6 +182,14 @@ class KubeClient:
         self._batch.create_namespaced_job(namespace=self._namespace, body=job)
         return job_name
 
+    def delete_job(self, job_name: str) -> None:
+        """Delete a K8s Job by name."""
+        self._batch.delete_namespaced_job(
+            name=job_name,
+            namespace=self._namespace,
+            body=client.V1DeleteOptions(propagation_policy="Foreground"),
+        )
+
     def get_job_status(self, job_name: str) -> str:
         """Return 'succeeded', 'failed', or 'running' for a K8s Job."""
         job = self._batch.read_namespaced_job(name=job_name, namespace=self._namespace)

@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Phalanx Control Plane</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2d3150;
+      --text: #e2e8f0;
+      --text-muted: #7c85a8;
+      --accent: #6366f1;
+      --accent2: #818cf8;
+      --green: #22c55e;
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --purple: #a855f7;
+      --cyan: #06b6d4;
+    }
+    body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.5; }
+    a { color: var(--accent2); text-decoration: none; }
+    button { cursor: pointer; border: none; font-family: inherit; font-size: 13px; border-radius: 6px; padding: 6px 14px; transition: opacity .15s; }
+    button:hover { opacity: 0.85; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    input, select { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 10px; font-family: inherit; font-size: 13px; outline: none; }
+    input:focus, select:focus { border-color: var(--accent); }
+    .nav { display: flex; align-items: center; gap: 24px; padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+    .nav-logo { font-weight: 700; font-size: 16px; color: var(--accent2); letter-spacing: .5px; }
+    .nav-item { padding: 6px 12px; border-radius: 6px; color: var(--text-muted); cursor: pointer; transition: all .15s; }
+    .nav-item:hover { color: var(--text); background: var(--surface2); }
+    .nav-item.active { color: var(--text); background: var(--surface2); border-bottom: 2px solid var(--accent); }
+    .page { padding: 24px; max-width: 1200px; margin: 0 auto; }
+    .page-title { font-size: 20px; font-weight: 600; margin-bottom: 20px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+    .card-header { display: flex; align-items: center; gap: 12px; cursor: pointer; }
+    .card-title { font-weight: 600; flex: 1; }
+    .card-meta { color: var(--text-muted); font-size: 12px; }
+    .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
+    .badge-running { background: rgba(34,197,94,.15); color: var(--green); }
+    .badge-pending { background: rgba(99,102,241,.15); color: var(--accent2); }
+    .badge-completed { background: rgba(59,130,246,.15); color: var(--blue); }
+    .badge-failed { background: rgba(239,68,68,.15); color: var(--red); }
+    .badge-cancelled { background: rgba(124,133,168,.15); color: var(--text-muted); }
+    .badge-out_of_gas { background: rgba(245,158,11,.15); color: var(--amber); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot-running { background: var(--green); animation: pulse 1.5s ease-in-out infinite; }
+    .dot-pending { background: var(--accent2); }
+    .dot-completed { background: var(--blue); }
+    .dot-failed { background: var(--red); }
+    .dot-cancelled { background: var(--text-muted); }
+    .dot-out_of_gas { background: var(--amber); }
+    .btn-cancel { background: rgba(239,68,68,.15); color: var(--red); }
+    .btn-retry { background: rgba(99,102,241,.15); color: var(--accent2); }
+    .btn-add-gas { background: var(--accent); color: #fff; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .progress-bar-wrap { background: var(--surface2); border-radius: 4px; height: 8px; overflow: hidden; margin: 3px 0; }
+    .progress-bar { height: 100%; border-radius: 4px; transition: width .3s; background: var(--accent); }
+    .progress-bar.amber { background: var(--amber); }
+    .gas-label { font-size: 11px; color: var(--text-muted); display: flex; justify-content: space-between; }
+    .gas-section { margin-top: 10px; }
+    .gas-title { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+    .out-of-gas-banner { background: rgba(245,158,11,.12); border: 1px solid rgba(245,158,11,.4); border-radius: 8px; padding: 12px 16px; margin-top: 12px; }
+    .out-of-gas-banner h4 { color: var(--amber); margin-bottom: 8px; font-size: 13px; }
+    .topup-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+    .topup-label { font-size: 12px; color: var(--text-muted); min-width: 80px; }
+    .topup-input { width: 100px; }
+    .log-panel { margin-top: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .log-panel-inner { max-height: 400px; overflow-y: auto; padding: 12px; font-size: 12px; }
+    .log-event { margin-bottom: 8px; border-radius: 6px; overflow: hidden; }
+    .log-event-header { padding: 6px 10px; display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 500; cursor: pointer; }
+    .log-event-body { padding: 6px 10px 8px; font-size: 12px; }
+    .log-llm_query .log-event-header { background: rgba(99,102,241,.1); color: var(--accent2); }
+    .log-llm_response .log-event-header { background: rgba(59,130,246,.1); color: var(--blue); }
+    .log-tool_call .log-event-header { background: rgba(168,85,247,.1); color: var(--purple); }
+    .log-tool_result .log-event-header { background: rgba(6,182,212,.1); color: var(--cyan); }
+    .log-complete .log-event-header { background: rgba(34,197,94,.1); color: var(--green); }
+    .log-error .log-event-header { background: rgba(239,68,68,.1); color: var(--red); }
+    .log-out_of_gas .log-event-header { background: rgba(245,158,11,.1); color: var(--amber); }
+    .log-gas_updated .log-event-header { background: rgba(124,133,168,.08); color: var(--text-muted); font-size: 11px; padding: 3px 8px; }
+    .log-event-header .token-badge { background: rgba(255,255,255,.08); border-radius: 4px; padding: 1px 6px; font-size: 11px; margin-left: auto; }
+    pre { white-space: pre-wrap; word-break: break-all; color: var(--text-muted); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; }
+    .kv-row { display: flex; gap: 8px; margin-bottom: 3px; }
+    .kv-key { color: var(--text-muted); min-width: 80px; }
+    .kv-val { color: var(--text); }
+    .duration-badge { background: rgba(255,255,255,.06); border-radius: 4px; padding: 1px 6px; font-size: 11px; color: var(--text-muted); }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; padding: 10px 12px; font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); }
+    td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tr:hover td { background: rgba(255,255,255,.02); }
+    .controls { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+    .pagination { display: flex; align-items: center; gap: 12px; margin-top: 16px; color: var(--text-muted); font-size: 13px; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
+    .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; width: min(90vw, 900px); max-height: 90vh; display: flex; flex-direction: column; }
+    .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-weight: 600; }
+    .modal-body { flex: 1; overflow-y: auto; padding: 16px 20px; }
+    .close-btn { background: none; color: var(--text-muted); font-size: 18px; padding: 4px 8px; }
+    .close-btn:hover { color: var(--text); background: var(--surface2); }
+    .log-preview { font-size: 11px; color: var(--text-muted); font-family: 'SF Mono', 'Fira Code', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
+    .elapsed { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+    .empty { color: var(--text-muted); text-align: center; padding: 48px; }
+    .copy-btn { background: none; color: var(--text-muted); font-size: 11px; padding: 2px 4px; border-radius: 3px; }
+    .copy-btn:hover { background: var(--surface2); color: var(--text); }
+    .job-id-cell { font-family: monospace; font-size: 12px; display: flex; align-items: center; gap: 4px; }
+    .placeholder-page { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; color: var(--text-muted); gap: 12px; }
+    .placeholder-page h2 { font-size: 22px; color: var(--text); }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ─── API helpers ────────────────────────────────────────────────────────────
+
+async function apiFetch(path, opts = {}) {
+  const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+// ─── Utilities ───────────────────────────────────────────────────────────────
+
+function elapsed(startedAt) {
+  const ms = Date.now() - new Date(startedAt).getTime();
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+function duration(start, end) {
+  if (!start || !end) return '—';
+  const ms = new Date(end).getTime() - new Date(start).getTime();
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m ${s % 60}s`;
+}
+
+function timeAgo(ts) {
+  if (!ts) return '—';
+  const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function copyText(text) {
+  navigator.clipboard?.writeText(text).catch(() => {});
+}
+
+// ─── StatusPill ──────────────────────────────────────────────────────────────
+
+function StatusPill({ status }) {
+  return (
+    <span className={`badge badge-${status}`}>
+      <span className={`dot dot-${status}`} />
+      {status}
+    </span>
+  );
+}
+
+// ─── GasMeter ────────────────────────────────────────────────────────────────
+
+function GasMeter({ job, onGasAdded }) {
+  const [inputTopup, setInputTopup] = useState(20000);
+  const [outputTopup, setOutputTopup] = useState(5000);
+  const [adding, setAdding] = useState(false);
+
+  const isOutOfGas = job.status === 'out_of_gas';
+  const inputRatio = job.gas_limit_input ? Math.min(job.gas_used_input / job.gas_limit_input, 1) : 0;
+  const outputRatio = job.gas_limit_output ? Math.min(job.gas_used_output / job.gas_limit_output, 1) : 0;
+  const inputExhausted = isOutOfGas && inputRatio >= 1;
+  const outputExhausted = isOutOfGas && outputRatio >= 1;
+
+  async function handleAddGas() {
+    setAdding(true);
+    try {
+      await apiFetch(`/agents/${job.id}/gas`, {
+        method: 'POST',
+        body: JSON.stringify({ input_amount: inputTopup, output_amount: outputTopup }),
+      });
+      onGasAdded?.();
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  return (
+    <div className="gas-section">
+      <div className="gas-title">Gas Budget</div>
+      <div className="gas-label">
+        <span>Input tokens</span>
+        <span>{(job.gas_used_input || 0).toLocaleString()} / {(job.gas_limit_input || 0).toLocaleString()}</span>
+      </div>
+      <div className="progress-bar-wrap">
+        <div className={`progress-bar${inputExhausted ? ' amber' : ''}`} style={{ width: `${inputRatio * 100}%` }} />
+      </div>
+      <div className="gas-label" style={{ marginTop: 6 }}>
+        <span>Output tokens</span>
+        <span>{(job.gas_used_output || 0).toLocaleString()} / {(job.gas_limit_output || 0).toLocaleString()}</span>
+      </div>
+      <div className="progress-bar-wrap">
+        <div className={`progress-bar${outputExhausted ? ' amber' : ''}`} style={{ width: `${outputRatio * 100}%` }} />
+      </div>
+      {isOutOfGas && (
+        <div className="out-of-gas-banner">
+          <h4>⚠ Agent paused — out of gas. Review the execution trace and add more tokens to continue.</h4>
+          <div className="topup-row">
+            <span className="topup-label">Input tokens</span>
+            <input className="topup-input" type="number" value={inputTopup} onChange={e => setInputTopup(Number(e.target.value))} min="0" step="1000" />
+            <span className="topup-label">Output tokens</span>
+            <input className="topup-input" type="number" value={outputTopup} onChange={e => setOutputTopup(Number(e.target.value))} min="0" step="1000" />
+            <button className="btn-add-gas" onClick={handleAddGas} disabled={adding}>
+              {adding ? 'Adding…' : 'Add Gas'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── LogPanel ────────────────────────────────────────────────────────────────
+
+function LogEvent({ event }) {
+  const [open, setOpen] = useState(false);
+  const p = event.payload;
+
+  const typeLabels = {
+    llm_query: '🔵 LLM Query',
+    llm_response: '💬 LLM Response',
+    tool_call: '🔧 Tool Call',
+    tool_result: '✅ Tool Result',
+    complete: '🎉 Complete',
+    error: '❌ Error',
+    out_of_gas: '⚠ Out of Gas',
+    gas_updated: 'gas_updated',
+    input_request: '💬 Input Request',
+    input_received: '💬 Input Received',
+    interrupted: '⛔ Interrupted',
+  };
+
+  if (event.event_type === 'gas_updated') {
+    return (
+      <div className={`log-event log-${event.event_type}`}>
+        <div className="log-event-header" style={{ fontSize: 11 }}>
+          gas_updated — input: {(p.gas_used_input || 0).toLocaleString()} / {(p.gas_limit_input || 0).toLocaleString()} · output: {(p.gas_used_output || 0).toLocaleString()} / {(p.gas_limit_output || 0).toLocaleString()}
+        </div>
+      </div>
+    );
+  }
+
+  function renderBody() {
+    switch (event.event_type) {
+      case 'llm_query':
+        return (
+          <div className="log-event-body">
+            <div className="kv-row"><span className="kv-key">messages</span><span className="kv-val">{p.message_count ?? (p.messages?.length ?? '?')}</span></div>
+            {p.tools?.length > 0 && <div className="kv-row"><span className="kv-key">tools</span><span className="kv-val">{p.tools.join(', ')}</span></div>}
+          </div>
+        );
+      case 'llm_response':
+        return (
+          <div className="log-event-body">
+            {p.content && <pre>{p.content}</pre>}
+            {p.tool_calls?.length > 0 && <div style={{ marginTop: 6, color: 'var(--purple)' }}>Tool calls: {p.tool_calls.map(tc => tc.name || tc).join(', ')}</div>}
+          </div>
+        );
+      case 'tool_call':
+        return (
+          <div className="log-event-body">
+            {p.args && Object.entries(p.args).map(([k, v]) => (
+              <div className="kv-row" key={k}><span className="kv-key">{k}</span><span className="kv-val">{typeof v === 'string' ? v : JSON.stringify(v)}</span></div>
+            ))}
+          </div>
+        );
+      case 'tool_result':
+        return (
+          <div className="log-event-body">
+            <pre>{typeof p.result === 'string' ? p.result : JSON.stringify(p.result, null, 2)}</pre>
+          </div>
+        );
+      case 'complete':
+        return (
+          <div className="log-event-body">
+            <div className="kv-row"><span className="kv-key">LLM calls</span><span className="kv-val">{p.llm_calls ?? '?'}</span></div>
+            <div className="kv-row"><span className="kv-key">Tool calls</span><span className="kv-val">{p.tool_calls ?? '?'}</span></div>
+            <div className="kv-row"><span className="kv-key">Total time</span><span className="kv-val">{p.total_time_ms ? `${p.total_time_ms}ms` : '?'}</span></div>
+          </div>
+        );
+      case 'error':
+        return (
+          <div className="log-event-body">
+            <div style={{ color: 'var(--red)', marginBottom: 6 }}>{p.message || p.error}</div>
+            {p.traceback && (
+              <details>
+                <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>Traceback</summary>
+                <pre style={{ marginTop: 6 }}>{p.traceback}</pre>
+              </details>
+            )}
+          </div>
+        );
+      case 'out_of_gas':
+        return (
+          <div className="log-event-body">
+            <div style={{ color: 'var(--amber)' }}>{p.message || 'Agent paused: out of gas'}</div>
+          </div>
+        );
+      default:
+        return p && Object.keys(p).length > 0 ? (
+          <div className="log-event-body"><pre>{JSON.stringify(p, null, 2)}</pre></div>
+        ) : null;
+    }
+  }
+
+  const hasBody = ['llm_query','llm_response','tool_call','tool_result','complete','error','out_of_gas'].includes(event.event_type);
+  const tokenCount = p?.input_tokens || p?.output_tokens || p?.tokens;
+
+  return (
+    <div className={`log-event log-${event.event_type}`}>
+      <div className="log-event-header" onClick={() => hasBody && setOpen(o => !o)}>
+        {hasBody && <span>{open ? '▾' : '▸'}</span>}
+        <span>{typeLabels[event.event_type] || event.event_type}</span>
+        {event.event_type === 'tool_call' && p.tool && <span style={{ opacity: .7 }}>{p.tool}</span>}
+        {event.event_type === 'tool_result' && p.duration_ms && <span className="duration-badge">{p.duration_ms}ms</span>}
+        {tokenCount && <span className="token-badge">{tokenCount} tokens</span>}
+      </div>
+      {open && hasBody && renderBody()}
+    </div>
+  );
+}
+
+function LogPanel({ jobId, isActive }) {
+  const [events, setEvents] = useState([]);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const scrollRef = useRef(null);
+  const autoScrollRef = useRef(true);
+
+  useEffect(() => { autoScrollRef.current = autoScroll; }, [autoScroll]);
+
+  useEffect(() => {
+    if (!jobId) return;
+    setEvents([]);
+
+    if (!isActive) {
+      // Fetch full history
+      apiFetch(`/agents/${jobId}/logs`).then(data => setEvents(data)).catch(() => {});
+      return;
+    }
+
+    // Stream live events via SSE
+    const es = new EventSource(`/agents/${jobId}/logs/stream`);
+    es.onmessage = e => {
+      if (!e.data) return;
+      try {
+        const ev = JSON.parse(e.data);
+        setEvents(prev => [...prev, ev]);
+      } catch {}
+    };
+    es.onerror = () => es.close();
+    return () => es.close();
+  }, [jobId, isActive]);
+
+  useEffect(() => {
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [events, autoScroll]);
+
+  function handleScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    setAutoScroll(atBottom);
+  }
+
+  return (
+    <div className="log-panel">
+      <div className="log-panel-inner" ref={scrollRef} onScroll={handleScroll}>
+        {events.length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>No events yet.</div>}
+        {events.map((ev, i) => <LogEvent key={`${ev.job_id}-${ev.sequence ?? i}`} event={ev} />)}
+      </div>
+    </div>
+  );
+}
+
+// ─── AgentCard ───────────────────────────────────────────────────────────────
+
+function AgentCard({ job: initialJob, onCancelled }) {
+  const [job, setJob] = useState(initialJob);
+  const [expanded, setExpanded] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [lastLog, setLastLog] = useState('');
+  const [tick, setTick] = useState(0);
+
+  // Keep elapsed time ticking
+  useEffect(() => {
+    const t = setInterval(() => setTick(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Subscribe to live log events for preview
+  useEffect(() => {
+    const es = new EventSource(`/agents/${job.id}/logs/stream`);
+    es.onmessage = e => {
+      if (!e.data) return;
+      try {
+        const ev = JSON.parse(e.data);
+        if (ev.event_type && ev.event_type !== 'gas_updated') {
+          const p = ev.payload;
+          const preview = p?.content || p?.message || p?.tool || ev.event_type;
+          setLastLog(String(preview).slice(0, 100));
+        }
+        if (ev.event_type === 'gas_updated') {
+          setJob(j => ({
+            ...j,
+            gas_used_input: ev.payload.gas_used_input ?? j.gas_used_input,
+            gas_used_output: ev.payload.gas_used_output ?? j.gas_used_output,
+            gas_limit_input: ev.payload.gas_limit_input ?? j.gas_limit_input,
+            gas_limit_output: ev.payload.gas_limit_output ?? j.gas_limit_output,
+          }));
+        }
+        if (ev.event_type === 'out_of_gas') {
+          setJob(j => ({ ...j, status: 'out_of_gas' }));
+        }
+      } catch {}
+    };
+    es.onerror = () => es.close();
+    return () => es.close();
+  }, [job.id]);
+
+  async function handleCancel(e) {
+    e.stopPropagation();
+    setCancelling(true);
+    setJob(j => ({ ...j, status: 'cancelled' }));
+    try {
+      await apiFetch(`/agents/${job.id}/cancel`, { method: 'POST' });
+      onCancelled?.(job.id);
+    } catch {
+      setJob(j => ({ ...j, status: initialJob.status }));
+      setCancelling(false);
+    }
+  }
+
+  async function refreshGas() {
+    try {
+      const data = await apiFetch(`/agents/${job.id}/gas`);
+      setJob(j => ({ ...j, ...data, status: data.status || j.status }));
+    } catch {}
+  }
+
+  const truncId = job.id.length > 20 ? job.id.slice(0, 8) + '…' + job.id.slice(-8) : job.id;
+
+  return (
+    <div className="card">
+      <div className="card-header" onClick={() => setExpanded(e => !e)}>
+        <span className={`dot dot-${job.status}`} />
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span className="card-title">{job.task}</span>
+            <span className="card-meta">project {job.project_name}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 3 }}>
+            <span className="job-id-cell">
+              {truncId}
+              <button className="copy-btn" onClick={e => { e.stopPropagation(); copyText(job.id); }}>⎘</button>
+            </span>
+            <span className="elapsed">{elapsed(job.started_at)}</span>
+            {lastLog && <span className="log-preview">{lastLog}</span>}
+          </div>
+        </div>
+        <StatusPill status={job.status} />
+        {(job.status === 'pending' || job.status === 'running') && (
+          <button className="btn-cancel btn-sm" onClick={handleCancel} disabled={cancelling}>
+            {cancelling ? '…' : 'Cancel'}
+          </button>
+        )}
+      </div>
+
+      <GasMeter job={job} onGasAdded={refreshGas} />
+
+      {expanded && (
+        <LogPanel jobId={job.id} isActive={job.status === 'running' || job.status === 'pending'} />
+      )}
+    </div>
+  );
+}
+
+// ─── Active Agents View ───────────────────────────────────────────────────────
+
+function ActiveAgentsView() {
+  const [jobs, setJobs] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function poll() {
+      try {
+        const data = await apiFetch('/agents');
+        if (!cancelled) setJobs(data);
+      } catch {}
+      if (!cancelled) setTimeout(poll, 5000);
+    }
+    poll();
+    return () => { cancelled = true; };
+  }, []);
+
+  function removeCancelled(id) {
+    setJobs(js => js.filter(j => j.id !== id));
+  }
+
+  return (
+    <div className="page">
+      <div className="page-title">Active Agents</div>
+      {jobs.length === 0
+        ? <div className="empty">No active agents.</div>
+        : jobs.map(j => <AgentCard key={j.id} job={j} onCancelled={removeCancelled} />)
+      }
+    </div>
+  );
+}
+
+// ─── History View ─────────────────────────────────────────────────────────────
+
+function HistoryRow({ job, onLogsClick }) {
+  async function handleRetry() {
+    try {
+      await apiFetch('/trigger', {
+        method: 'POST',
+        body: JSON.stringify({ task: job.task, project_id: job.project_id, context: job.context }),
+      });
+    } catch {}
+  }
+
+  return (
+    <tr>
+      <td>{job.task}</td>
+      <td>{job.project_name}</td>
+      <td><StatusPill status={job.status} /></td>
+      <td>{duration(job.started_at, job.finished_at)}</td>
+      <td>{timeAgo(job.finished_at)}</td>
+      <td>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button className="btn-sm btn-primary" onClick={() => onLogsClick(job)}>Logs</button>
+          {job.status === 'failed' && (
+            <button className="btn-retry btn-sm" onClick={handleRetry}>Retry</button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function HistoryView() {
+  const [jobs, setJobs] = useState([]);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(0);
+  const [modalJob, setModalJob] = useState(null);
+  const PAGE_SIZE = 20;
+
+  useEffect(() => {
+    apiFetch(`/agents/history?limit=200&offset=0`).then(setJobs).catch(() => {});
+  }, []);
+
+  const filtered = jobs.filter(j => {
+    const matchSearch = !search ||
+      j.project_name.toLowerCase().includes(search.toLowerCase()) ||
+      j.task.toLowerCase().includes(search.toLowerCase());
+    const matchStatus = statusFilter === 'all' || j.status === statusFilter;
+    return matchSearch && matchStatus;
+  });
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  function handleSearchChange(e) { setSearch(e.target.value); setPage(0); }
+  function handleStatusChange(e) { setStatusFilter(e.target.value); setPage(0); }
+
+  return (
+    <div className="page">
+      <div className="page-title">History</div>
+      <div className="controls">
+        <input placeholder="Search project or task…" value={search} onChange={handleSearchChange} style={{ width: 220 }} />
+        <select value={statusFilter} onChange={handleStatusChange}>
+          <option value="all">All statuses</option>
+          <option value="completed">Completed</option>
+          <option value="failed">Failed</option>
+          <option value="cancelled">Cancelled</option>
+          <option value="out_of_gas">Out of gas</option>
+        </select>
+      </div>
+      {paged.length === 0
+        ? <div className="empty">No jobs found.</div>
+        : (
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Project</th>
+                  <th>Status</th>
+                  <th>Duration</th>
+                  <th>Completed</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paged.map(j => <HistoryRow key={j.id} job={j} onLogsClick={setModalJob} />)}
+              </tbody>
+            </table>
+          </div>
+        )
+      }
+      <div className="pagination">
+        <button disabled={page === 0} onClick={() => setPage(p => p - 1)}>← Prev</button>
+        <span>Page {page + 1} of {totalPages || 1} · {filtered.length} total</span>
+        <button disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>Next →</button>
+      </div>
+
+      {modalJob && (
+        <div className="modal-overlay" onClick={() => setModalJob(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span>{modalJob.task} — {modalJob.project_name}</span>
+              <button className="close-btn" onClick={() => setModalJob(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <GasMeter job={modalJob} />
+              <LogPanel jobId={modalJob.id} isActive={false} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── New Session View (placeholder) ──────────────────────────────────────────
+
+function NewSessionView() {
+  return (
+    <div className="page">
+      <div className="placeholder-page">
+        <h2>New Session</h2>
+        <p>Interactive sessions will be available in Phase 7.</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── App ──────────────────────────────────────────────────────────────────────
+
+function App() {
+  const [view, setView] = useState('active');
+
+  return (
+    <>
+      <nav className="nav">
+        <div className="nav-logo">⚡ Phalanx</div>
+        {[['active', 'Active Agents'], ['history', 'History'], ['session', 'New Session']].map(([v, label]) => (
+          <div key={v} className={`nav-item${view === v ? ' active' : ''}`} onClick={() => setView(v)}>
+            {label}
+          </div>
+        ))}
+      </nav>
+      {view === 'active' && <ActiveAgentsView />}
+      {view === 'history' && <HistoryView />}
+      {view === 'session' && <NewSessionView />}
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
