@@ -250,6 +250,39 @@ Full walkthrough: [`docs/walkthrough.md:22-90`](docs/walkthrough.md)
 
 ---
 
+## Keeping documentation up to date
+
+When you make changes to this codebase, update the documentation as part of the same commit. Do not leave docs describing the old behaviour.
+
+**This file (AGENTS.md)**
+- If you add, move, or delete a source file, update the source files table and the repository layout.
+- If a class or function moves to a different line, update the `file:line` reference.
+- If you add a new pattern, abstraction, or hard rule, add it to the relevant section.
+
+**`docs/ARCHITECTURE.md` and `docs/architecture/`**
+- If you change how a component works, update its sub-document (`gateway.md`, `worker.md`, `providers.md`, etc.).
+- If you add a new component or remove one, update the overview table in `docs/ARCHITECTURE.md` and the project structure diagram.
+- If you change the API surface (`gateway/main.py` endpoints), update `docs/architecture/gateway.md`.
+- If you change the data model (`shared/models.py`), update `docs/architecture/data-model.md`.
+- If you change how authentication works, update `docs/architecture/authentication.md`.
+- If you add or change a security property, update `docs/architecture/security.md`.
+
+**`docs/providers/`**
+- If you change credential requirements, OAuth scopes, webhook events, or signature behaviour for a provider, update the relevant file in `docs/providers/`.
+
+**`docs/walkthrough.md`**
+- If you change the local dev setup, Helm install steps, or any user-facing workflow, update the walkthrough.
+
+**`helm/phalanx/values.yaml`**
+- Every new configurable value must have a comment explaining what it does. The Helm section of `docs/walkthrough.md` should be updated if the install command changes.
+
+**General rules**
+- Line references in this file must stay accurate. If a refactor shifts a function to a different line, fix the reference.
+- Do not add a doc section for something that does not yet exist in code.
+- Do not leave `TODO` or `planned` language in documentation for features that are already implemented.
+
+---
+
 ## What NOT to do
 
 - Do not import provider SDKs (`python-gitlab`, `PyGithub`, etc.) outside `providers/{name}/` — the gateway and worker must stay provider-agnostic.
