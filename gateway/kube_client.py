@@ -20,6 +20,7 @@ class KubeClient:
         self._image = os.getenv("PI_AGENT_IMAGE", "localhost:5001/pi-agent-worker:latest")
         self._gitlab_url = os.getenv("GITLAB_URL", "http://gitlab-webservice-default.gitlab.svc.cluster.local:8080")
         self._llm_endpoint = os.getenv("LLM_ENDPOINT", "")
+        self._gateway_url = os.getenv("GATEWAY_URL", "http://pi-agent-gateway")
 
     def spawn_agent_job(self, task_spec: TaskSpec) -> str:
         job_name = f"pi-agent-{task_spec.task.replace('_', '-')}-{uuid.uuid4().hex[:8]}"
@@ -28,6 +29,8 @@ class KubeClient:
             client.V1EnvVar(name="TASK", value=task_spec.task),
             client.V1EnvVar(name="PROJECT_ID", value=str(task_spec.project_id)),
             client.V1EnvVar(name="TASK_CONTEXT", value=json.dumps(task_spec.context)),
+            client.V1EnvVar(name="JOB_ID", value=job_name),
+            client.V1EnvVar(name="GATEWAY_URL", value=self._gateway_url),
             client.V1EnvVar(name="GITLAB_URL", value=self._gitlab_url),
             client.V1EnvVar(name="LLM_ENDPOINT", value=self._llm_endpoint),
             client.V1EnvVar(

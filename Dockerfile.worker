@@ -5,4 +5,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY worker/ ./worker/
 COPY shared/ ./shared/
 COPY providers/ ./providers/
-CMD ["python", "-m", "worker"]
+CMD ["python", "-m", "worker.main"]

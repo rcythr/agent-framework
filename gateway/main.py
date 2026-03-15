@@ -125,6 +125,18 @@ async def agents_history(limit: int = 50, offset: int = 0):
     return [j.model_dump(mode="json") for j in jobs]
 
 
+@app.post("/internal/jobs/{job_id}/status")
+async def update_job_status(job_id: str, body: dict):
+    status = body.get("status")
+    try:
+        await _db.get_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    finished_at = datetime.now(timezone.utc)
+    await _db.update_job_status(job_id, status, finished_at=finished_at)
+    return {"job_id": job_id, "status": status}
+
+
 @app.get("/internal/oauth2-proxy-config")
 async def oauth2_proxy_config():
     cfg = _auth_provider.oauth_proxy_config()
