@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request, Response, HTTPException
 from contextlib import asynccontextmanager
 from sse_starlette.sse import EventSourceResponse
 
+from gateway.config_loader import ConfigLoader
 from gateway.db import Database
 from gateway.event_mapper import map_event_to_task
 from gateway.kube_client import KubeClient
@@ -21,6 +22,7 @@ _db = Database()
 _kube: KubeClient | None = None
 _provider = None
 _auth_provider = None
+_config_loader: ConfigLoader | None = None
 _subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
 
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "out_of_gas"}
@@ -28,11 +30,12 @@ _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "out_of_gas"}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _kube, _provider, _auth_provider
+    global _kube, _provider, _auth_provider, _config_loader
     await _db.connect()
     _kube = KubeClient()
     _provider = get_provider()
     _auth_provider = get_auth_provider()
+    _config_loader = ConfigLoader(provider=_provider, kube_client=_kube)
     yield
     await _db.close()
 
@@ -41,7 +44,7 @@ app = FastAPI(lifespan=lifespan)
 
 
 def _default_agent_config() -> AgentConfig:
-    """Return a permissive default AgentConfig for Phase 1 (before Phase 4 wires config_loader)."""
+    """Return a permissive default AgentConfig used for manual /trigger calls."""
     return AgentConfig(
         skills=[],
         tools=[],
@@ -49,10 +52,11 @@ def _default_agent_config() -> AgentConfig:
         image=os.getenv("PI_AGENT_IMAGE", "localhost:5001/pi-agent-worker:latest"),
         gas_limit_input=80_000,
         gas_limit_output=20_000,
+        allowed_users=[],
     )
 
 
-def _make_job_record(job_name: str, task_spec: TaskSpec) -> JobRecord:
+def _make_job_record(job_name: str, task_spec: TaskSpec, agent_config: AgentConfig) -> JobRecord:
     return JobRecord(
         id=job_name,
         task=task_spec.task,
@@ -61,6 +65,8 @@ def _make_job_record(job_name: str, task_spec: TaskSpec) -> JobRecord:
         status="pending",
         context=task_spec.context,
         started_at=datetime.now(timezone.utc),
+        gas_limit_input=agent_config.gas_limit_input,
+        gas_limit_output=agent_config.gas_limit_output,
     )
 
 
@@ -88,29 +94,36 @@ async def webhook_gitlab(request: Request):
     if task_spec is None:
         return Response(status_code=200)
 
-    # Step 4: resolve agent config (Phase 1: use defaults; Phase 4 wires config_loader)
-    agent_config = _default_agent_config()
+    # Step 4: resolve agent config from per-project .agents/config.yaml
+    sha = task_spec.context.get("sha") or task_spec.context.get("commits", [{}])[0].get("sha", "HEAD")
+    agent_config = await _config_loader.resolve(task_spec.project_id, sha)
 
-    # Step 5: check actor against allowed_users (empty list = allow all)
+    # Step 5: check actor against allowed_users (deny-by-default: empty list = no dispatch)
     actor = getattr(event, "actor", None)
-    if agent_config.allowed_users and actor not in agent_config.allowed_users:
+    if not agent_config.allowed_users or actor not in agent_config.allowed_users:
+        import logging
+        logging.getLogger(__name__).info(
+            "Webhook dispatch rejected: actor=%r not in allowed_users=%r for project %s",
+            actor, agent_config.allowed_users, task_spec.project_id,
+        )
         return Response(status_code=200)
 
     # Step 6: spawn K8s job
-    job_name = _kube.spawn_agent_job(task_spec)
+    job_name = _kube.spawn_agent_job(task_spec, agent_config)
 
     # Step 7: persist job record
-    await _db.create_job(_make_job_record(job_name, task_spec))
+    await _db.create_job(_make_job_record(job_name, task_spec, agent_config))
 
     return {"job_name": job_name}
 
 
 @app.post("/trigger")
 async def trigger(task_spec: TaskSpec):
+    # Manual trigger: skip allowed_users check (access controlled by dashboard auth layer)
     agent_config = _default_agent_config()
 
-    job_name = _kube.spawn_agent_job(task_spec)
-    await _db.create_job(_make_job_record(job_name, task_spec))
+    job_name = _kube.spawn_agent_job(task_spec, agent_config)
+    await _db.create_job(_make_job_record(job_name, task_spec, agent_config))
 
     return {"job_name": job_name}
 

@@ -77,6 +77,7 @@ class AgentConfig(BaseModel):
     image: str
     gas_limit_input: int
     gas_limit_output: int
+    allowed_users: list[str]
 
 
 class SessionContext(BaseModel):
