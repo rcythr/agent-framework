@@ -1,0 +1,10 @@
+name: linting
+description: Run the project linter and fix any issues before committing.
+prompt: |
+  Before committing changes, run the project's linter and formatter:
+  - For Python projects: try `ruff check --fix .` then `ruff format .` (or `flake8`/`black`).
+  - For JavaScript/TypeScript projects: try `eslint --fix` and `prettier --write`.
+  - For other languages, check for a Makefile target such as `make lint` or `make fmt`.
+  Fix any auto-fixable issues. For issues that require manual intervention, report
+  them clearly and explain why they cannot be fixed automatically.
+  Do not commit code that introduces new linting errors.

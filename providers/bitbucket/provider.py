@@ -7,6 +7,8 @@ from providers.base import (
     FileContent,
     CommitResult,
     MRResult,
+    IssueResult,
+    Issue,
     MergeRequest,
     Commit,
     PushEvent,
@@ -38,6 +40,11 @@ class BitbucketProvider(RepositoryProvider):
 
     def _post(self, path: str, **kwargs) -> httpx.Response:
         r = httpx.post(f"{_API_BASE}{path}", auth=self._auth, **kwargs)
+        r.raise_for_status()
+        return r
+
+    def _delete(self, path: str, **kwargs) -> httpx.Response:
+        r = httpx.delete(f"{_API_BASE}{path}", auth=self._auth, **kwargs)
         r.raise_for_status()
         return r
 
@@ -110,6 +117,22 @@ class BitbucketProvider(RepositoryProvider):
             web_url=data.get("links", {}).get("html", {}).get("href", ""),
         )
 
+    def get_mr(self, project_id: int | str, mr_iid: int) -> MergeRequest | None:
+        workspace, slug = self._split(project_id)
+        try:
+            r = self._get(f"/repositories/{workspace}/{slug}/pullrequests/{mr_iid}")
+            pr = r.json()
+            return MergeRequest(
+                iid=pr["id"],
+                title=pr.get("title", ""),
+                description=pr.get("description") or "",
+                source_branch=pr.get("source", {}).get("branch", {}).get("name", ""),
+                target_branch=pr.get("destination", {}).get("branch", {}).get("name", ""),
+                web_url=pr.get("links", {}).get("html", {}).get("href", ""),
+            )
+        except httpx.HTTPStatusError:
+            return None
+
     def post_mr_comment(
         self, project_id: int | str, mr_iid: int, body: str
     ) -> None:
@@ -165,6 +188,67 @@ class BitbucketProvider(RepositoryProvider):
             },
         )
 
+    def get_issue(self, project_id: int | str, issue_iid: int) -> Issue | None:
+        workspace, slug = self._split(project_id)
+        try:
+            r = self._get(f"/repositories/{workspace}/{slug}/issues/{issue_iid}")
+            data = r.json()
+            return Issue(
+                iid=data["id"],
+                title=data.get("title", ""),
+                body=data.get("content", {}).get("raw", ""),
+                state=data.get("state", "open"),
+                web_url=data.get("links", {}).get("html", {}).get("href", ""),
+                author=data.get("reporter", {}).get("nickname", ""),
+            )
+        except httpx.HTTPStatusError:
+            return None
+
+    def list_issues(self, project_id: int | str, state: str = "open") -> list[Issue]:
+        workspace, slug = self._split(project_id)
+        # Bitbucket issue states: new, open, resolved, closed, on hold, invalid, duplicate, wontfix
+        bb_state = "open" if state == "open" else ("resolved" if state == "closed" else state)
+        try:
+            r = self._get(
+                f"/repositories/{workspace}/{slug}/issues",
+                params={"q": f'state="{bb_state}"', "pagelen": 50},
+            )
+            return [
+                Issue(
+                    iid=i["id"],
+                    title=i.get("title", ""),
+                    body=i.get("content", {}).get("raw", ""),
+                    state=i.get("state", "open"),
+                    web_url=i.get("links", {}).get("html", {}).get("href", ""),
+                    author=i.get("reporter", {}).get("nickname", ""),
+                )
+                for i in r.json().get("values", [])
+            ]
+        except httpx.HTTPStatusError:
+            return []
+
+    def create_issue(
+        self, project_id: int | str, title: str, body: str
+    ) -> IssueResult:
+        workspace, slug = self._split(project_id)
+        data = self._post(
+            f"/repositories/{workspace}/{slug}/issues",
+            json={"title": title, "content": {"raw": body}, "kind": "bug"},
+        ).json()
+        return IssueResult(
+            iid=data["id"],
+            web_url=data.get("links", {}).get("html", {}).get("href", ""),
+        )
+
+    def post_issue_comment(
+        self, project_id: int | str, issue_iid: int, body: str
+    ) -> None:
+        workspace, slug = self._split(project_id)
+        self._post(
+            f"/repositories/{workspace}/{slug}/issues/{issue_iid}/comments",
+            json={"content": {"raw": body}},
+        )
+
     def search_projects(self, query: str, user_token: str) -> list[dict]:
         auth = self._token_auth(user_token)
         r = httpx.get(
@@ -183,9 +267,9 @@ class BitbucketProvider(RepositoryProvider):
             for repo in r.json().get("values", [])
         ]
 
-    def list_branches(self, project_id: int | str, user_token: str) -> list[str]:
+    def list_branches(self, project_id: int | str, user_token: str = "") -> list[str]:
         workspace, slug = self._split(project_id)
-        auth = self._token_auth(user_token)
+        auth = self._token_auth(user_token) if user_token else self._auth
         r = httpx.get(
             f"{_API_BASE}/repositories/{workspace}/{slug}/refs/branches",
             auth=auth,
@@ -194,9 +278,9 @@ class BitbucketProvider(RepositoryProvider):
         r.raise_for_status()
         return [b["name"] for b in r.json().get("values", [])]
 
-    def list_open_mrs(self, project_id: int | str, user_token: str) -> list[MergeRequest]:
+    def list_open_mrs(self, project_id: int | str, user_token: str = "") -> list[MergeRequest]:
         workspace, slug = self._split(project_id)
-        auth = self._token_auth(user_token)
+        auth = self._token_auth(user_token) if user_token else self._auth
         r = httpx.get(
             f"{_API_BASE}/repositories/{workspace}/{slug}/pullrequests",
             auth=auth,

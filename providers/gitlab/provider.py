@@ -6,6 +6,8 @@ from providers.base import (
     FileContent,
     CommitResult,
     MRResult,
+    IssueResult,
+    Issue,
     MergeRequest,
     Commit,
     PushEvent,
@@ -71,6 +73,21 @@ class GitLabProvider(RepositoryProvider):
         })
         return MRResult(iid=mr.iid, web_url=mr.web_url)
 
+    def get_mr(self, project_id: int | str, mr_iid: int) -> MergeRequest | None:
+        try:
+            project = self._gl.projects.get(project_id)
+            mr = project.mergerequests.get(mr_iid)
+            return MergeRequest(
+                iid=mr.iid,
+                title=mr.title,
+                description=mr.description or "",
+                source_branch=mr.source_branch,
+                target_branch=mr.target_branch,
+                web_url=mr.web_url,
+            )
+        except GitlabGetError:
+            return None
+
     def post_mr_comment(
         self, project_id: int | str, mr_iid: int, body: str
     ) -> None:
@@ -116,6 +133,52 @@ class GitLabProvider(RepositoryProvider):
             "name": context,
         })
 
+    def get_issue(self, project_id: int | str, issue_iid: int) -> Issue | None:
+        try:
+            project = self._gl.projects.get(project_id)
+            issue = project.issues.get(issue_iid)
+            return Issue(
+                iid=issue.iid,
+                title=issue.title,
+                body=issue.description or "",
+                state=issue.state,
+                web_url=issue.web_url,
+                author=issue.author.get("username", "") if isinstance(issue.author, dict) else "",
+            )
+        except GitlabGetError:
+            return None
+
+    def list_issues(self, project_id: int | str, state: str = "open") -> list[Issue]:
+        project = self._gl.projects.get(project_id)
+        # GitLab uses "opened" instead of "open"
+        gl_state = "opened" if state == "open" else state
+        issues = project.issues.list(state=gl_state, all=True)
+        return [
+            Issue(
+                iid=i.iid,
+                title=i.title,
+                body=i.description or "",
+                state="open" if i.state == "opened" else i.state,
+                web_url=i.web_url,
+                author=i.author.get("username", "") if isinstance(i.author, dict) else "",
+            )
+            for i in issues
+        ]
+
+    def create_issue(
+        self, project_id: int | str, title: str, body: str
+    ) -> IssueResult:
+        project = self._gl.projects.get(project_id)
+        issue = project.issues.create({"title": title, "description": body})
+        return IssueResult(iid=issue.iid, web_url=issue.web_url)
+
+    def post_issue_comment(
+        self, project_id: int | str, issue_iid: int, body: str
+    ) -> None:
+        project = self._gl.projects.get(project_id)
+        issue = project.issues.get(issue_iid)
+        issue.notes.create({"body": body})
+
     def search_projects(self, query: str, user_token: str) -> list[dict]:
         gl = gitlab.Gitlab(url=self._gl.url, private_token=user_token)
         projects = gl.projects.list(search=query, membership=True)
@@ -129,13 +192,13 @@ class GitLabProvider(RepositoryProvider):
             for p in projects
         ]
 
-    def list_branches(self, project_id: int | str, user_token: str) -> list[str]:
-        gl = gitlab.Gitlab(url=self._gl.url, private_token=user_token)
+    def list_branches(self, project_id: int | str, user_token: str = "") -> list[str]:
+        gl = gitlab.Gitlab(url=self._gl.url, private_token=user_token or self._gl.private_token)
         project = gl.projects.get(project_id)
         return [b.name for b in project.branches.list(all=True)]
 
-    def list_open_mrs(self, project_id: int | str, user_token: str) -> list[MergeRequest]:
-        gl = gitlab.Gitlab(url=self._gl.url, private_token=user_token)
+    def list_open_mrs(self, project_id: int | str, user_token: str = "") -> list[MergeRequest]:
+        gl = gitlab.Gitlab(url=self._gl.url, private_token=user_token or self._gl.private_token)
         project = gl.projects.get(project_id)
         mrs = project.mergerequests.list(state="opened", all=True)
         return [

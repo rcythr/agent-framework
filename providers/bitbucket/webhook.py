@@ -44,6 +44,7 @@ def parse_webhook_event(
 def _parse_push_event(body: dict) -> PushEvent | None:
     repo = body.get("repository", {})
     project_id = repo.get("full_name", "")
+    project_path = repo.get("full_name", "")
     actor = body.get("actor", {}).get("nickname", "") or body.get("actor", {}).get("display_name", "")
 
     push = body.get("push", {})
@@ -75,6 +76,7 @@ def _parse_push_event(body: dict) -> PushEvent | None:
         branch=branch,
         commits=commits,
         project_id=project_id,
+        project_path=project_path,
         actor=actor,
     )
 
@@ -93,6 +95,7 @@ def _parse_pr_event(body: dict, event_key: str) -> MREvent:
 
     repo = body.get("repository", {})
     project_id = repo.get("full_name", "")
+    project_path = repo.get("full_name", "")
     actor = body.get("actor", {}).get("nickname", "") or body.get("actor", {}).get("display_name", "")
 
     pr = body.get("pullrequest", {})
@@ -108,6 +111,7 @@ def _parse_pr_event(body: dict, event_key: str) -> MREvent:
     return MREvent(
         mr=mr,
         project_id=project_id,
+        project_path=project_path,
         action=action,
         actor=actor,
     )
@@ -116,15 +120,19 @@ def _parse_pr_event(body: dict, event_key: str) -> MREvent:
 def _parse_comment_event(body: dict) -> CommentEvent:
     repo = body.get("repository", {})
     project_id = repo.get("full_name", "")
+    project_path = repo.get("full_name", "")
     actor = body.get("actor", {}).get("nickname", "") or body.get("actor", {}).get("display_name", "")
 
     comment = body.get("comment", {})
     pr = body.get("pullrequest", {})
+    source_branch = pr.get("source", {}).get("branch", {}).get("name")
 
     return CommentEvent(
         body=comment.get("content", {}).get("raw", ""),
         project_id=project_id,
+        project_path=project_path,
         mr_iid=pr.get("id"),
+        source_branch=source_branch,
         note_id=comment.get("id", ""),
         actor=actor,
     )

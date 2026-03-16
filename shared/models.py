@@ -15,6 +15,7 @@ class ActivationRecord(BaseModel):
 class TaskSpec(BaseModel):
     task: str
     project_id: int | str
+    project_path: str = ""   # e.g. "group/repo" — used to clone workspace
     context: dict[str, Any]
 
 

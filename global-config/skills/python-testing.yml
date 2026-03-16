@@ -1,0 +1,9 @@
+name: python-testing
+description: Run pytest and report test results before committing changes.
+prompt: |
+  When modifying Python code, always run the project's test suite before committing:
+  1. Use the bash tool to run `pytest` (or the project's preferred test command).
+  2. If tests fail, diagnose the failures from the output and fix them.
+  3. Only commit once all tests pass (or explicitly flag any pre-existing failures
+     that are unrelated to your changes).
+  Report the final test outcome in your summary.

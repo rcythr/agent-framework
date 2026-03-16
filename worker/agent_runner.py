@@ -5,6 +5,7 @@ import httpx
 
 from worker.agent import Agent, AgentEvent
 from worker.agent_logger import AgentLogger
+from worker.tools.global_tools_loader import load_global_tools
 from worker.tools.toolkit_factory import get_toolkit
 
 
@@ -51,7 +52,7 @@ def build_task_message(task: str, context: dict) -> str:
 
 async def run_agent(task: str, project_id: int | str, context: dict) -> None:
     toolkit = get_toolkit(project_id=project_id)
-    tools = toolkit.get_tools()
+    tools = toolkit.get_tools() + load_global_tools()
 
     endpoint = os.getenv("LLM_ENDPOINT", "https://api.openai.com/v1")
     api_key = os.getenv("OPENAI_API_KEY", "")
@@ -178,7 +179,7 @@ async def run_session(session_id: str) -> None:
     gas_limit_output = int(os.getenv("GAS_LIMIT_OUTPUT", "40000"))
 
     toolkit = get_toolkit(project_id=project_id)
-    tools = toolkit.get_tools()
+    tools = toolkit.get_tools() + load_global_tools()
 
     system_prompt = (
         "You are an interactive agent helping with a software project. "

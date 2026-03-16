@@ -1,0 +1,12 @@
+name: security-review
+description: Analyse code changes for common security vulnerabilities.
+prompt: |
+  When reviewing or writing code, check for the following security issues:
+  - Injection flaws: SQL, command, LDAP, XPath injection.
+  - Secrets and credentials committed to source (API keys, passwords, tokens).
+  - Insecure deserialization or use of eval/exec on untrusted input.
+  - Missing authentication or authorisation checks on sensitive operations.
+  - Overly broad file or network permissions.
+  - Unvalidated redirects or untrusted URL construction.
+  Report any findings with file path, line number, severity (critical/high/medium/low),
+  and a concrete remediation suggestion. Do not suppress findings without explanation.

@@ -22,6 +22,19 @@ phalanx/
 ├── shared/             # Pydantic models shared between gateway and worker
 ├── dashboard/          # Vue 3 + Vite SPA (src/ → dist/ via npm run build)
 ├── global-config/      # Default agent config, global skills and tools
+│   ├── agent-config.yml          # Base prompt + lists active global tools and skills
+│   ├── tools/                    # Core tool implementations (*.py, each exports get_tool())
+│   │   ├── read.py               # Read a local file
+│   │   ├── write.py              # Write a local file
+│   │   ├── edit.py               # Search-and-replace in a local file
+│   │   ├── bash.py               # Run a shell command
+│   │   ├── spawn_subagent.py     # POST /trigger to spawn a child job
+│   │   └── rag_query.py          # Query a LangIndex-compatible RAG API
+│   └── skills/                   # Skill prompt snippets (*.yml, each has name/description/prompt)
+│       ├── python-testing.yml
+│       ├── security-review.yml
+│       ├── conventional-commits.yml
+│       └── linting.yml
 ├── k8s/                # Raw Kubernetes manifests (local dev)
 ├── helm/               # Helm chart for production deployment
 ├── kind/               # KIND cluster config for local development
@@ -61,16 +74,17 @@ Key gateway endpoint groups in `gateway/main.py`:
 |---|---|---|
 | `worker/main.py` | 1–21 | K8s Job entrypoint; routes to job or session mode |
 | `worker/agent.py` | 1–234 | `AgentEvent` dataclass at line 10; `Agent` class at line 19 |
-| `worker/agent_runner.py` | 1–229 | `build_system_prompt` at line 11; `run_agent` at line 52; `run_session` at line 170 |
+| `worker/agent_runner.py` | 1–230 | `build_system_prompt` at line 11; `run_agent` at line 52; `run_session` at line 171 |
 | `worker/agent_logger.py` | 1–145 | `AgentLogger` class at line 15; streams events to gateway |
 | `worker/tools/toolkit_base.py` | 1–17 | `ProviderToolkit` ABC |
 | `worker/tools/toolkit_factory.py` | 1–15 | Factory: reads `PROVIDER` env var, returns correct toolkit |
+| `worker/tools/global_tools_loader.py` | 1–43 | `load_global_tools()` — dynamically imports `global-config/tools/*.py` and returns their tool dicts |
 
 ### Providers (`providers/`)
 
 | File | Lines | Purpose |
 |---|---|---|
-| `providers/base.py` | 1–161 | Shared event models (lines 6–63); `RepositoryProvider` ABC at line 65 |
+| `providers/base.py` | 1–175 | Shared event/data models (lines 6–62); `RepositoryProvider` ABC at line 65 |
 | `providers/registry.py` | 1–37 | `get_provider()` factory |
 | `providers/auth_base.py` | 1–27 | `OAuthProxyConfig`, `UserIdentity`, `AuthProvider` ABC |
 | `providers/auth_registry.py` | 1–28 | `get_auth_provider()` factory |
@@ -197,12 +211,21 @@ Provider webhook
 | `PROVIDER` | Which provider to load (`gitlab`, `github`, `bitbucket`, `gitea`) |
 | `GATEWAY_URL` | Internal URL of the gateway for posting log events |
 | `JOB_ID` | Identifier of this job (for logging) |
-| `SESSION_ID` | If set, run in session mode (`worker/agent_runner.py:170`) |
+| `SESSION_ID` | If set, run in session mode (`worker/agent_runner.py:171`) |
+| `PROJECT_ID` | Provider project ID (numeric for GitLab, `owner/repo` for others) |
+| `PROJECT_PATH` | `owner/repo` path used to clone the workspace |
+| `WORKSPACE` | Path where the repository was cloned (`/workspace`) |
 | `LLM_API_BASE` | OpenAI-compatible API base URL |
 | `LLM_API_KEY` | API key for the LLM |
 | `LLM_MODEL` | Model name to use |
 | `GAS_LIMIT_INPUT` | Max input tokens for this run |
 | `GAS_LIMIT_OUTPUT` | Max output tokens for this run |
+| `GITLAB_URL` | GitLab instance URL (passed to init container for authenticated clone) |
+| `GITLAB_TOKEN` | GitLab API token (from `gitlab-creds` secret) |
+| `GITHUB_TOKEN` | GitHub PAT (from `github-creds` secret, optional) |
+| `BB_USERNAME` / `BB_APP_PASSWORD` | Bitbucket credentials (from `bitbucket-creds` secret, optional) |
+| `GITEA_URL` / `GITEA_TOKEN` | Gitea credentials (from `gitea-creds` secret, optional) |
+| `RAG_API_URL` | URL of a LangIndex-compatible RAG API (enables the `rag_query` tool) |
 | `REQUESTS_CA_BUNDLE` | Path to custom CA bundle (set by `scripts/docker-entrypoint.sh` when cert is mounted) |
 | `SSL_CERT_FILE` | Same — for libraries that read this variable instead |
 
@@ -266,7 +289,13 @@ Full walkthrough: [`docs/walkthrough.md:22-90`](docs/walkthrough.md)
 
 **Adding a new API endpoint** — `gateway/main.py` (add route); `gateway/db.py:11` (Database class for persistence).
 
-**Adding a new agent tool** — `providers/{name}/toolkit.py` (add method + register in `get_tools()`); `worker/tools/toolkit_factory.py:1` (factory stays unchanged unless adding a new provider).
+**Adding a provider-specific agent tool** — `providers/{name}/toolkit.py` (add method + register in `get_tools()`); `worker/tools/toolkit_factory.py:1` (factory stays unchanged unless adding a new provider).
+
+**Adding a global agent tool** — create `global-config/tools/<name>.py` exposing `get_tool() -> dict` (with `name`, `description`, `parameters`, `execute` keys). Register the tool name in `global-config/agent-config.yml` under `tools:`. The loader at `worker/tools/global_tools_loader.py:1` picks it up automatically at runtime.
+
+**Workspace** — every K8s Job gets an `emptyDir` volume mounted at `/workspace`. The `git-clone` init container (`alpine/git`) checks out the relevant branch before the worker starts: `source_branch` for MR reviews and comments, `branch` for push events. The `WORKSPACE=/workspace` env var is set so tools know where to operate. The `read`, `write`, `edit`, and `bash` global tools all work against the local filesystem where the repo is cloned.
+
+**Adding a global skill** — create `global-config/skills/<name>.yml` with `name`, `description`, and `prompt` fields. Add the skill name to `global-config/agent-config.yml` under `skills:` (or to a project's `.agents/config.yaml`). `gateway/config_loader.py` injects the prompt into the agent's system prompt at job spawn time.
 
 **Adding a new provider** — implement `providers/{name}/provider.py`, `webhook.py`, `toolkit.py`, `auth.py` following `providers/base.py:65` (`RepositoryProvider` ABC) and `providers/auth_base.py:1` (`AuthProvider` ABC). Register in `providers/registry.py:1` and `providers/auth_registry.py:1`. See [`docs/architecture/extending.md`](docs/architecture/extending.md) and [`docs/architecture/providers.md`](docs/architecture/providers.md).
 

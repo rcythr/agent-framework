@@ -18,16 +18,27 @@ class Commit(BaseModel):
     author: str
 
 
+class Issue(BaseModel):
+    iid: int
+    title: str
+    body: str
+    state: str       # "open" or "closed"
+    web_url: str
+    author: str
+
+
 class PushEvent(BaseModel):
     branch: str
     commits: list[Commit]
     project_id: int | str
+    project_path: str = ""   # e.g. "group/repo" or "owner/repo"
     actor: str
 
 
 class MREvent(BaseModel):
     mr: MergeRequest
     project_id: int | str
+    project_path: str = ""
     action: str
     actor: str
 
@@ -35,7 +46,9 @@ class MREvent(BaseModel):
 class CommentEvent(BaseModel):
     body: str
     project_id: int | str
+    project_path: str = ""
     mr_iid: int | None
+    source_branch: str | None = None  # branch of the MR being commented on
     note_id: int | str
     actor: str
 
@@ -52,6 +65,11 @@ class CommitResult(BaseModel):
 
 
 class MRResult(BaseModel):
+    iid: int
+    web_url: str
+
+
+class IssueResult(BaseModel):
     iid: int
     web_url: str
 
@@ -96,6 +114,10 @@ class RepositoryProvider(ABC):
         """Open a merge/pull request."""
 
     @abstractmethod
+    def get_mr(self, project_id: int | str, mr_iid: int) -> MergeRequest | None:
+        """Get metadata for a single merge/pull request."""
+
+    @abstractmethod
     def post_mr_comment(
         self, project_id: int | str, mr_iid: int, body: str
     ) -> None:
@@ -120,16 +142,36 @@ class RepositoryProvider(ABC):
         """Post a commit status / check run result."""
 
     @abstractmethod
+    def get_issue(self, project_id: int | str, issue_iid: int) -> Issue | None:
+        """Get a single issue by its IID/number."""
+
+    @abstractmethod
+    def list_issues(self, project_id: int | str, state: str = "open") -> list[Issue]:
+        """List issues for a project. state: 'open', 'closed', or 'all'."""
+
+    @abstractmethod
+    def create_issue(
+        self, project_id: int | str, title: str, body: str
+    ) -> IssueResult:
+        """Create a new issue and return its IID and URL."""
+
+    @abstractmethod
+    def post_issue_comment(
+        self, project_id: int | str, issue_iid: int, body: str
+    ) -> None:
+        """Post a comment on an issue."""
+
+    @abstractmethod
     def search_projects(self, query: str, user_token: str) -> list[dict]:
         """Search for projects accessible to the user identified by user_token."""
 
     @abstractmethod
-    def list_branches(self, project_id: int | str, user_token: str) -> list[str]:
-        """List branches for a project."""
+    def list_branches(self, project_id: int | str, user_token: str = "") -> list[str]:
+        """List branches for a project. Uses service credentials when user_token is empty."""
 
     @abstractmethod
-    def list_open_mrs(self, project_id: int | str, user_token: str) -> list[MergeRequest]:
-        """List open merge/pull requests for a project."""
+    def list_open_mrs(self, project_id: int | str, user_token: str = "") -> list[MergeRequest]:
+        """List open merge/pull requests for a project. Uses service credentials when user_token is empty."""
 
     @abstractmethod
     def verify_webhook(self, headers: dict, body: bytes, secret: str) -> bool:
