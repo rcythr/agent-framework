@@ -1,3 +1,6 @@
+**THIS PROJECT IS A WORK IN PROGRESS**
+
+
 # Phalanx
 
 ![Greek Phalanx](https://upload.wikimedia.org/wikipedia/commons/e/ed/Greek_Phalanx.jpg)
