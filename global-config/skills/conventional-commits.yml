@@ -1,0 +1,14 @@
+name: conventional-commits
+description: Write commit messages that follow the Conventional Commits specification.
+prompt: |
+  All commit messages must follow the Conventional Commits specification
+  (https://www.conventionalcommits.org/):
+
+    <type>[optional scope]: <description>
+
+    [optional body]
+
+  Allowed types: feat, fix, docs, style, refactor, perf, test, chore, ci, build.
+  Keep the subject line under 72 characters.
+  Use the body to explain *why* the change was made, not just what changed.
+  Reference issue or MR numbers where applicable (e.g. "Closes #42").

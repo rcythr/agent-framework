@@ -22,6 +22,17 @@ phalanx/
 ├── shared/             # Pydantic models shared between gateway and worker
 ├── dashboard/          # Vue 3 + Vite SPA (src/ → dist/ via npm run build)
 ├── global-config/      # Default agent config, global skills and tools
+│   ├── agent-config.yml          # Base prompt + lists active global tools and skills
+│   ├── tools/                    # Core tool implementations (*.py, each exports get_tool())
+│   │   ├── read.py               # Read a local file
+│   │   ├── write.py              # Write a local file
+│   │   ├── edit.py               # Search-and-replace in a local file
+│   │   └── bash.py               # Run a shell command
+│   └── skills/                   # Skill prompt snippets (*.yml, each has name/description/prompt)
+│       ├── python-testing.yml
+│       ├── security-review.yml
+│       ├── conventional-commits.yml
+│       └── linting.yml
 ├── k8s/                # Raw Kubernetes manifests (local dev)
 ├── helm/               # Helm chart for production deployment
 ├── kind/               # KIND cluster config for local development
@@ -61,10 +72,11 @@ Key gateway endpoint groups in `gateway/main.py`:
 |---|---|---|
 | `worker/main.py` | 1–21 | K8s Job entrypoint; routes to job or session mode |
 | `worker/agent.py` | 1–234 | `AgentEvent` dataclass at line 10; `Agent` class at line 19 |
-| `worker/agent_runner.py` | 1–229 | `build_system_prompt` at line 11; `run_agent` at line 52; `run_session` at line 170 |
+| `worker/agent_runner.py` | 1–230 | `build_system_prompt` at line 11; `run_agent` at line 52; `run_session` at line 171 |
 | `worker/agent_logger.py` | 1–145 | `AgentLogger` class at line 15; streams events to gateway |
 | `worker/tools/toolkit_base.py` | 1–17 | `ProviderToolkit` ABC |
 | `worker/tools/toolkit_factory.py` | 1–15 | Factory: reads `PROVIDER` env var, returns correct toolkit |
+| `worker/tools/global_tools_loader.py` | 1–43 | `load_global_tools()` — dynamically imports `global-config/tools/*.py` and returns their tool dicts |
 
 ### Providers (`providers/`)
 
@@ -266,7 +278,11 @@ Full walkthrough: [`docs/walkthrough.md:22-90`](docs/walkthrough.md)
 
 **Adding a new API endpoint** — `gateway/main.py` (add route); `gateway/db.py:11` (Database class for persistence).
 
-**Adding a new agent tool** — `providers/{name}/toolkit.py` (add method + register in `get_tools()`); `worker/tools/toolkit_factory.py:1` (factory stays unchanged unless adding a new provider).
+**Adding a provider-specific agent tool** — `providers/{name}/toolkit.py` (add method + register in `get_tools()`); `worker/tools/toolkit_factory.py:1` (factory stays unchanged unless adding a new provider).
+
+**Adding a global agent tool** — create `global-config/tools/<name>.py` exposing `get_tool() -> dict` (with `name`, `description`, `parameters`, `execute` keys). Register the tool name in `global-config/agent-config.yml` under `tools:`. The loader at `worker/tools/global_tools_loader.py:1` picks it up automatically at runtime.
+
+**Adding a global skill** — create `global-config/skills/<name>.yml` with `name`, `description`, and `prompt` fields. Add the skill name to `global-config/agent-config.yml` under `skills:` (or to a project's `.agents/config.yaml`). `gateway/config_loader.py` injects the prompt into the agent's system prompt at job spawn time.
 
 **Adding a new provider** — implement `providers/{name}/provider.py`, `webhook.py`, `toolkit.py`, `auth.py` following `providers/base.py:65` (`RepositoryProvider` ABC) and `providers/auth_base.py:1` (`AuthProvider` ABC). Register in `providers/registry.py:1` and `providers/auth_registry.py:1`. See [`docs/architecture/extending.md`](docs/architecture/extending.md) and [`docs/architecture/providers.md`](docs/architecture/providers.md).
 

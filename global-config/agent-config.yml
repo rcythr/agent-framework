@@ -4,4 +4,12 @@ base_prompt: |
   requests, and post comments. Complete the assigned task thoroughly and
   carefully. Always explain your reasoning and the changes you make.
 skills: []
-tools: []
+tools:
+  - name: read
+    description: Read a file from the local filesystem.
+  - name: write
+    description: Write content to a file on the local filesystem.
+  - name: edit
+    description: Replace an exact substring in a local file.
+  - name: bash
+    description: Run a shell command and return its output.

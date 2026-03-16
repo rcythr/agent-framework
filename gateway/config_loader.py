@@ -55,6 +55,24 @@ def _merge_tools(
     return list(merged.values())
 
 
+def _load_skill_prompts(skills: list[SkillDef], global_config_dir: str) -> str:
+    """Load prompt snippets from global-config/skills/<name>.yml for each active skill."""
+    skills_dir = Path(global_config_dir) / "skills"
+    parts: list[str] = []
+    for skill in skills:
+        skill_file = skills_dir / f"{skill.name}.yml"
+        if not skill_file.exists():
+            continue
+        try:
+            with open(skill_file) as f:
+                data = yaml.safe_load(f) or {}
+            if prompt := data.get("prompt", "").strip():
+                parts.append(f"## Skill: {skill.name}\n{prompt}")
+        except Exception as e:
+            logger.warning("Failed to load skill prompt for %s: %s", skill.name, e)
+    return "\n\n".join(parts)
+
+
 class ConfigLoader:
     """Resolves per-project AgentConfig by fetching and merging project + global config."""
 
@@ -139,7 +157,11 @@ class ConfigLoader:
                 else int(os.getenv("DEFAULT_JOB_OUTPUT_GAS_LIMIT", "20000"))
             )
 
-            if project_config.dockerfile is not None:
+                skill_prompts = _load_skill_prompts(skills, self._global_config_dir)
+            if skill_prompts:
+                system_prompt = system_prompt + "\n\n" + skill_prompts
+
+        if project_config.dockerfile is not None:
                 image = await self._build_or_get_image(
                     project_id, project_config.dockerfile, sha
                 )
@@ -152,6 +174,9 @@ class ConfigLoader:
             skills = global_skills
             tools = global_tools
             system_prompt = global_base_prompt
+            skill_prompts = _load_skill_prompts(skills, self._global_config_dir)
+            if skill_prompts:
+                system_prompt = system_prompt + "\n\n" + skill_prompts
             gas_limit_input = int(os.getenv("DEFAULT_JOB_INPUT_GAS_LIMIT", "80000"))
             gas_limit_output = int(os.getenv("DEFAULT_JOB_OUTPUT_GAS_LIMIT", "20000"))
             image = os.getenv("PI_AGENT_IMAGE", "localhost:5001/pi-agent-worker:latest")
