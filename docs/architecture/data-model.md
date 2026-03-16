@@ -47,6 +47,7 @@ class JobRecord(BaseModel):
     gas_used_input: int = 0           # input tokens consumed so far
     gas_used_output: int = 0          # output tokens consumed so far
     gas_topups: list[dict] = []       # record of each top-up: {"input": N, "output": M}
+    result: str | None = None         # final text response from the agent (None if not yet finished)
 
 class SkillDef(BaseModel):
     name: str

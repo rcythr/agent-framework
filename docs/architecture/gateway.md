@@ -103,7 +103,7 @@ The `jobs` table stores one row per agent run: id, task, project details, status
 Key methods:
 
 - `create_job(job: JobRecord)` — called by the gateway when a K8s Job is spawned
-- `update_job_status(job_id, status, finished_at?)` — called on worker completion/failure callbacks
+- `update_job_status(job_id, status, finished_at?, result?)` — called on worker completion/failure callbacks; stores the agent's final text response when provided
 - `append_log_event(event: LogEvent)` — called by the internal log ingest endpoint
 - `get_job(job_id) → JobRecord` — used by the dashboard API
 - `list_jobs(status?, limit?, offset?) → list[JobRecord]` — drives the active and history views
@@ -230,7 +230,8 @@ Receives GitLab webhooks and manual trigger requests, validates webhook tokens, 
 | `POST` | `/webhook/{provider}` | Receives provider webhook events (e.g. `/webhook/gitlab`, `/webhook/github`); provider verifies signature, parses to shared event model, checks actor against `allowed_users` in project config before dispatch |
 | `POST` | `/trigger` | Manual trigger: accepts a `TaskSpec`, spawns an agent job |
 | `POST` | `/internal/log` | Called by worker pods to ingest structured `LogEvent` records |
-| `POST` | `/internal/jobs/{id}/status` | Called by worker pods on completion or failure |
+| `POST` | `/internal/jobs/{id}/status` | Called by worker pods on completion or failure; accepts optional `result` field containing the agent's final text response |
+| `GET` | `/internal/jobs/{id}/await-result` | Long-poll: blocks until the job reaches a terminal status, then returns `{"status": "...", "result": "..."}`. Returns immediately if the job is already terminal. Query param `timeout` (seconds, default 300) caps wait time. Used by parent agents waiting for sub-agent output. |
 | `GET` | `/agents` | List active jobs (status `pending` or `running`) |
 | `GET` | `/agents/history` | Paginated list of completed/failed/cancelled jobs |
 | `GET` | `/agents/{id}` | Single job record with metadata |

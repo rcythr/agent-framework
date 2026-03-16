@@ -188,3 +188,40 @@ async def test_run_agent_posts_failed_status_on_exception():
 
         mock_http_client.post.assert_called_once()
         assert "failed" in str(mock_http_client.post.call_args)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_includes_result_in_status_post():
+    """run_agent includes the agent's last_response as 'result' in the status POST body."""
+    with patch("worker.agent_runner.Agent") as mock_agent_cls, \
+         patch("worker.agent_runner.get_toolkit") as mock_get_toolkit, \
+         patch("worker.agent_runner.httpx") as mock_httpx, \
+         patch.dict(os.environ, {
+             "JOB_ID": "job-result",
+             "GATEWAY_URL": "http://gateway",
+         }):
+        mock_toolkit = MagicMock()
+        mock_toolkit.get_tools.return_value = []
+        mock_get_toolkit.return_value = mock_toolkit
+
+        mock_agent_instance = MagicMock()
+        mock_agent_instance.run = AsyncMock()
+        mock_agent_instance.last_response = "Here is what I did."
+        mock_agent_cls.return_value = mock_agent_instance
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_http_client = AsyncMock()
+        mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
+        mock_http_client.__aexit__ = AsyncMock(return_value=None)
+        mock_http_client.post = AsyncMock(return_value=mock_resp)
+        mock_httpx.AsyncClient.return_value = mock_http_client
+
+        from worker.agent_runner import run_agent
+        await run_agent(task="review_mr", project_id=1, context={"mr_iid": 1})
+
+        mock_http_client.post.assert_called_once()
+        call_kwargs = mock_http_client.post.call_args.kwargs
+        body = call_kwargs.get("json", {})
+        assert body.get("result") == "Here is what I did."
+        assert body.get("status") == "completed"

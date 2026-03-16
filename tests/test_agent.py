@@ -495,3 +495,77 @@ async def test_gas_used_properties():
 
     assert agent.gas_used_input == 30
     assert agent.gas_used_output == 10
+
+
+# ---------------------------------------------------------------------------
+# Tests: last_response / result propagation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_last_response_captured_after_run():
+    """Agent.last_response holds the final LLM text after run() completes."""
+    agent = _make_agent()
+    response = _make_llm_response(content="All done, here is the summary.")
+
+    with patch("worker.agent.AsyncOpenAI") as mock_openai_cls:
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create = AsyncMock(return_value=response)
+
+        await agent.run("start")
+
+    assert agent.last_response == "All done, here is the summary."
+
+
+@pytest.mark.asyncio
+async def test_last_response_empty_before_run():
+    """Agent.last_response is empty string before run() is called."""
+    agent = _make_agent()
+    assert agent.last_response == ""
+
+
+@pytest.mark.asyncio
+async def test_complete_event_includes_result():
+    """complete event payload contains a 'result' key with the final text."""
+    agent = _make_agent()
+    complete_events = []
+
+    async def capture(event: AgentEvent):
+        if event.event_type == "complete":
+            complete_events.append(event.payload)
+
+    agent._event_handler = capture
+
+    response = _make_llm_response(content="Final answer.")
+
+    with patch("worker.agent.AsyncOpenAI") as mock_openai_cls:
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create = AsyncMock(return_value=response)
+
+        await agent.run("go")
+
+    assert len(complete_events) == 1
+    assert complete_events[0]["result"] == "Final answer."
+
+
+@pytest.mark.asyncio
+async def test_last_response_is_last_llm_reply_after_tool_calls():
+    """last_response is the final (non-tool) LLM message, not an intermediate one."""
+    tools, _ = _make_tools()
+    agent = _make_agent(tools=tools)
+
+    tc = _make_tool_call("c1", "echo", {"text": "x"})
+    responses = [
+        _make_llm_response(tool_calls=[tc]),
+        _make_llm_response(content="Finished after tool."),
+    ]
+
+    with patch("worker.agent.AsyncOpenAI") as mock_openai_cls:
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create = AsyncMock(side_effect=responses)
+
+        await agent.run("do it")
+
+    assert agent.last_response == "Finished after tool."

@@ -45,6 +45,7 @@ class Agent:
 
         self._steer_queue: asyncio.Queue[str] = asyncio.Queue()
         self._follow_up_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._last_response: str = ""
 
     @property
     def gas_used_input(self) -> int:
@@ -53,6 +54,11 @@ class Agent:
     @property
     def gas_used_output(self) -> int:
         return self._gas_used_output
+
+    @property
+    def last_response(self) -> str:
+        """The final text response from the LLM before the agent loop exited."""
+        return self._last_response
 
     def steer(self, message: str) -> None:
         self._steer_queue.put_nowait(message)
@@ -189,6 +195,7 @@ class Agent:
                     follow_up_msg = await self._follow_up_queue.get()
                     messages.append({"role": "user", "content": follow_up_msg})
                     continue
+                self._last_response = msg.content or ""
                 break
 
             # Process tool calls
@@ -230,5 +237,6 @@ class Agent:
             payload={
                 "gas_used_input": self._gas_used_input,
                 "gas_used_output": self._gas_used_output,
+                "result": self._last_response,
             },
         ))

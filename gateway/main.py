@@ -47,6 +47,7 @@ _session_subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "out_of_gas"}
 _SESSION_TERMINAL_STATUSES = {"complete", "failed", "cancelled", "out_of_gas"}
 _gas_waiters: dict[str, list[asyncio.Queue]] = defaultdict(list)
+_job_result_waiters: dict[str, list[asyncio.Queue]] = defaultdict(list)
 
 
 @asynccontextmanager
@@ -198,15 +199,18 @@ async def agents_history(limit: int = 50, offset: int = 0):
 @app.post("/internal/jobs/{job_id}/status")
 async def update_job_status(job_id: str, body: dict):
     status = body.get("status")
+    result = body.get("result")
     try:
         await _db.get_job(job_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
     finished_at = datetime.now(timezone.utc)
-    await _db.update_job_status(job_id, status, finished_at=finished_at)
+    await _db.update_job_status(job_id, status, finished_at=finished_at, result=result)
     if status in _TERMINAL_STATUSES:
         for q in _subscribers.pop(job_id, []):
             await q.put(None)
+        for q in _job_result_waiters.pop(job_id, []):
+            await q.put({"status": status, "result": result})
     return {"job_id": job_id, "status": status}
 
 
@@ -327,6 +331,38 @@ async def internal_add_gas(job_id: str, body: dict):
     for q in list(_gas_waiters.get(job_id, [])):
         await q.put(body)
     return {"job_id": job_id}
+
+
+@app.get("/internal/jobs/{job_id}/await-result")
+async def await_job_result(job_id: str, timeout: float = 300.0):
+    """Long-poll: blocks until job reaches a terminal status, then returns its result.
+
+    Returns immediately if the job is already in a terminal state.
+    The ``timeout`` query parameter caps how long to wait (seconds; default 300).
+    Response body: ``{"status": "<terminal_status>", "result": "<text or null>"}``.
+    """
+    try:
+        job = await _db.get_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    if job.status in _TERMINAL_STATUSES:
+        return {"status": job.status, "result": job.result}
+
+    queue: asyncio.Queue = asyncio.Queue()
+    _job_result_waiters[job_id].append(queue)
+    try:
+        item = await asyncio.wait_for(queue.get(), timeout=timeout)
+        return item
+    except asyncio.TimeoutError:
+        job = await _db.get_job(job_id)
+        return {"status": job.status, "result": job.result}
+    finally:
+        waiters = _job_result_waiters.get(job_id, [])
+        if queue in waiters:
+            waiters.remove(queue)
+        if not waiters:
+            _job_result_waiters.pop(job_id, None)
 
 
 # ── Session endpoints ────────────────────────────────────────────────────────

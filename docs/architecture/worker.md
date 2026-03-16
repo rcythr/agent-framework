@@ -208,6 +208,12 @@ class Agent:
 
     @property
     def gas_used_output(self) -> int: ...
+
+    @property
+    def last_response(self) -> str:
+        """The final text response from the LLM before the agent loop exited.
+        Empty string before run() is called or if the agent exited via an exception."""
+        ...
 ```
 
 The `event_handler` callback is how `AgentLogger` attaches to the loop — the agent emits; the logger persists and streams to the gateway. This keeps the agent loop free of any I/O concerns beyond the LLM API call itself.
@@ -220,7 +226,7 @@ Initialises an `Agent` instance using the fully resolved `AgentConfig` injected 
 
 The runner operates in one of two modes, determined by the `SESSION_ID` environment variable:
 
-**Job mode** (no `SESSION_ID`) — standard webhook-triggered or CI-triggered run. The runner executes the agent loop to completion without any user interaction.
+**Job mode** (no `SESSION_ID`) — standard webhook-triggered or CI-triggered run. The runner executes the agent loop to completion without any user interaction. On completion, the runner reads `agent.last_response` (the agent's final text output) and includes it in the `POST /internal/jobs/{id}/status` call as a `result` field. The gateway stores this in `JobRecord.result` and notifies any parent agents waiting on `GET /internal/jobs/{id}/await-result`.
 
 **Session mode** (`SESSION_ID` is set) — interactive user-initiated run. The runner wraps each agent loop iteration with two additional behaviours:
 

@@ -39,9 +39,15 @@ class Database:
                 gas_limit_output INTEGER NOT NULL DEFAULT 20000,
                 gas_used_input INTEGER NOT NULL DEFAULT 0,
                 gas_used_output INTEGER NOT NULL DEFAULT 0,
-                gas_topups TEXT NOT NULL DEFAULT '[]'
+                gas_topups TEXT NOT NULL DEFAULT '[]',
+                result TEXT
             )
         """)
+        # Migrate existing databases that lack the result column
+        cursor = await self._db.execute("PRAGMA table_info(jobs)")
+        columns = {row["name"] async for row in cursor}
+        if "result" not in columns:
+            await self._db.execute("ALTER TABLE jobs ADD COLUMN result TEXT")
         await self._db.execute("""
             CREATE TABLE IF NOT EXISTS log_events (
                 job_id TEXT NOT NULL,
@@ -100,8 +106,8 @@ class Database:
                 id, task, project_id, project_name, status, context,
                 started_at, finished_at,
                 gas_limit_input, gas_limit_output,
-                gas_used_input, gas_used_output, gas_topups
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                gas_used_input, gas_used_output, gas_topups, result
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.id,
@@ -117,18 +123,21 @@ class Database:
                 job.gas_used_input,
                 job.gas_used_output,
                 json.dumps(job.gas_topups),
+                job.result,
             ),
         )
         await self._db.commit()
 
     async def update_job_status(
-        self, job_id: str, status: str, finished_at: datetime | None = None
+        self, job_id: str, status: str, finished_at: datetime | None = None,
+        result: str | None = None,
     ) -> None:
         await self._db.execute(
-            "UPDATE jobs SET status = ?, finished_at = ? WHERE id = ?",
+            "UPDATE jobs SET status = ?, finished_at = ?, result = COALESCE(?, result) WHERE id = ?",
             (
                 status,
                 finished_at.isoformat() if finished_at else None,
+                result,
                 job_id,
             ),
         )
@@ -399,6 +408,7 @@ def _row_to_job(row: aiosqlite.Row) -> JobRecord:
         gas_used_input=row["gas_used_input"],
         gas_used_output=row["gas_used_output"],
         gas_topups=json.loads(row["gas_topups"]),
+        result=row["result"],
     )
 
 

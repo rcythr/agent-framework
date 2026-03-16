@@ -53,8 +53,8 @@ Detailed layout with annotations: [`docs/ARCHITECTURE.md:91-128`](docs/ARCHITECT
 
 | File | Lines | Purpose |
 |---|---|---|
-| `gateway/main.py` | 1–680 | FastAPI app — all HTTP endpoints, SSE streams, lifespan startup |
-| `gateway/db.py` | 1–453 | SQLite persistence via aiosqlite; `Database` class at line 11 |
+| `gateway/main.py` | 1–720 | FastAPI app — all HTTP endpoints, SSE streams, lifespan startup |
+| `gateway/db.py` | 1–460 | SQLite persistence via aiosqlite; `Database` class at line 11 |
 | `gateway/kube_client.py` | 1–272 | Kubernetes Job spawner; `KubeClient` class at line 11 |
 | `gateway/config_loader.py` | 1–233 | Fetches + merges per-project config; `ConfigLoader` class at line 58 |
 | `gateway/event_mapper.py` | 1–53 | Maps provider events → `TaskSpec` |
@@ -64,17 +64,17 @@ Key gateway endpoint groups in `gateway/main.py`:
 - Webhook ingestion: lines 99–160
 - Job API (`/agents/...`): lines 178–329
 - Session API (`/sessions/...`): lines 330–555
-- Internal cluster endpoints (`/internal/...`): lines 194–577
-- Project proxy endpoints (`/projects/...`): lines 578–680
-- Dashboard SPA: line 683 (serves `dashboard/dist/index.html`; `/assets` mounted at line 66)
+- Internal cluster endpoints (`/internal/...`): lines 194–617
+- Project proxy endpoints (`/projects/...`): lines 618–720
+- Dashboard SPA: line 723 (serves `dashboard/dist/index.html`; `/assets` mounted at line 66)
 
 ### Worker (`worker/`)
 
 | File | Lines | Purpose |
 |---|---|---|
 | `worker/main.py` | 1–21 | K8s Job entrypoint; routes to job or session mode |
-| `worker/agent.py` | 1–234 | `AgentEvent` dataclass at line 10; `Agent` class at line 19 |
-| `worker/agent_runner.py` | 1–230 | `build_system_prompt` at line 11; `run_agent` at line 52; `run_session` at line 171 |
+| `worker/agent.py` | 1–248 | `AgentEvent` dataclass at line 10; `Agent` class at line 19; `last_response` property at line 60 |
+| `worker/agent_runner.py` | 1–234 | `build_system_prompt` at line 11; `run_agent` at line 52; `run_session` at line 175 |
 | `worker/agent_logger.py` | 1–145 | `AgentLogger` class at line 15; streams events to gateway |
 | `worker/tools/toolkit_base.py` | 1–17 | `ProviderToolkit` ABC |
 | `worker/tools/toolkit_factory.py` | 1–15 | Factory: reads `PROVIDER` env var, returns correct toolkit |
@@ -128,7 +128,7 @@ Dev server: `npm run dev` in `dashboard/` — serves on port 5173 with API proxy
 | `ActivationRecord` | 6 | Webhook registration record |
 | `TaskSpec` | 15 | Provider-agnostic task description passed to worker |
 | `LogEvent` | 21 | One structured event in the execution trace |
-| `JobRecord` | 41 | Persisted job state (status, gas limits/usage, timestamps) |
+| `JobRecord` | 41 | Persisted job state (status, gas limits/usage, timestamps, final result text) |
 | `SkillDef` / `ToolDef` | 58 / 64 | Skill and tool definitions |
 | `ProjectConfig` | 70 | Parsed `.agents/config.yaml` |
 | `AgentConfig` | 82 | Fully resolved config produced by config loader |
@@ -294,6 +294,8 @@ Full walkthrough: [`docs/walkthrough.md:22-90`](docs/walkthrough.md)
 **Adding a global agent tool** — create `global-config/tools/<name>.py` exposing `get_tool() -> dict` (with `name`, `description`, `parameters`, `execute` keys). Register the tool name in `global-config/agent-config.yml` under `tools:`. The loader at `worker/tools/global_tools_loader.py:1` picks it up automatically at runtime.
 
 **Workspace** — every K8s Job gets an `emptyDir` volume mounted at `/workspace`. The `git-clone` init container (`alpine/git`) checks out the relevant branch before the worker starts: `source_branch` for MR reviews and comments, `branch` for push events. The `WORKSPACE=/workspace` env var is set so tools know where to operate. The `read`, `write`, `edit`, and `bash` global tools all work against the local filesystem where the repo is cloned.
+
+**Subagent result messaging** — a parent agent can spawn a sub-job and optionally wait for its output using `spawn_subagent(task=..., goal=..., wait=True)`. When `wait=True`, the tool calls `GET /internal/jobs/{job_name}/await-result` which long-polls until the sub-job reaches a terminal state, then returns the sub-agent's final text response. The sub-agent's `run_agent()` automatically captures `agent.last_response` and posts it to `POST /internal/jobs/{id}/status` as the `result` field. Use `wait=False` (default) for fire-and-forget parallelism; use `wait=True` when the parent needs the sub-agent's output before continuing.
 
 **Adding a global skill** — create `global-config/skills/<name>.yml` with `name`, `description`, and `prompt` fields. Add the skill name to `global-config/agent-config.yml` under `skills:` (or to a project's `.agents/config.yaml`). `gateway/config_loader.py` injects the prompt into the agent's system prompt at job spawn time.
 

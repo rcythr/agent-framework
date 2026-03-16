@@ -54,6 +54,7 @@ class JobRecord(BaseModel):
     gas_used_input: int = 0
     gas_used_output: int = 0
     gas_topups: list[dict] = []
+    result: str | None = None
 
 
 class SkillDef(BaseModel):

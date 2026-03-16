@@ -94,7 +94,7 @@ async def run_agent(task: str, project_id: int | str, context: dict) -> None:
         async with httpx.AsyncClient() as http_client:
             resp = await http_client.post(
                 f"{gateway_url}/internal/jobs/{job_id}/status",
-                json={"status": final_status},
+                json={"status": final_status, "result": agent.last_response or None},
             )
             resp.raise_for_status()
 

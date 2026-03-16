@@ -157,11 +157,11 @@ class ConfigLoader:
                 else int(os.getenv("DEFAULT_JOB_OUTPUT_GAS_LIMIT", "20000"))
             )
 
-                skill_prompts = _load_skill_prompts(skills, self._global_config_dir)
+            skill_prompts = _load_skill_prompts(skills, self._global_config_dir)
             if skill_prompts:
                 system_prompt = system_prompt + "\n\n" + skill_prompts
 
-        if project_config.dockerfile is not None:
+            if project_config.dockerfile is not None:
                 image = await self._build_or_get_image(
                     project_id, project_config.dockerfile, sha
                 )
