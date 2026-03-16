@@ -6,7 +6,7 @@ This file is written for AI agents working inside this repository. Read it befor
 
 ## What this project does
 
-Phalanx is an autonomous agent system for Git repositories. It listens to repository events (pushes, merge requests, comments) and spawns AI agents as ephemeral Kubernetes Jobs to review code, implement changes, and post inline feedback. A persistent gateway coordinates everything; a React SPA dashboard lets humans watch and intervene in real time.
+Phalanx is an autonomous agent system for Git repositories. It listens to repository events (pushes, merge requests, comments) and spawns AI agents as ephemeral Kubernetes Jobs to review code, implement changes, and post inline feedback. A persistent gateway coordinates everything; a Vue 3 SPA dashboard lets humans watch and intervene in real time.
 
 Full narrative: [`docs/ARCHITECTURE.md:1-50`](docs/ARCHITECTURE.md)
 
@@ -53,7 +53,7 @@ Key gateway endpoint groups in `gateway/main.py`:
 - Session API (`/sessions/...`): lines 330–555
 - Internal cluster endpoints (`/internal/...`): lines 194–577
 - Project proxy endpoints (`/projects/...`): lines 578–680
-- Dashboard SPA: line 678
+- Dashboard SPA: line 683 (serves `dashboard/dist/index.html`; `/assets` mounted at line 66)
 
 ### Worker (`worker/`)
 
@@ -78,6 +78,34 @@ Key gateway endpoint groups in `gateway/main.py`:
 | `providers/github/` | — | GitHub implementation |
 | `providers/bitbucket/` | — | Bitbucket implementation |
 | `providers/gitea/` | — | Gitea implementation |
+
+### Dashboard (`dashboard/`)
+
+Built with Vue 3 and Vite. Source lives in `dashboard/src/`; the compiled output served by the gateway is `dashboard/dist/`.
+
+| File | Purpose |
+|---|---|
+| `dashboard/index.html` | Vite HTML entry point |
+| `dashboard/vite.config.js` | Vite config; dev-server proxies `/agents`, `/sessions`, `/projects` to gateway port 3000 |
+| `dashboard/src/main.js` | Creates and mounts the Vue app |
+| `dashboard/src/App.vue` | Root component — nav bar and view switching |
+| `dashboard/src/styles/global.css` | CSS variables, resets, and all shared utility classes |
+| `dashboard/src/api/index.js` | `apiFetch()` — thin wrapper around `fetch()` |
+| `dashboard/src/utils/time.js` | `elapsed()`, `duration()`, `timeAgo()`, `copyText()` |
+| `dashboard/src/components/StatusPill.vue` | Coloured status badge |
+| `dashboard/src/components/GasMeter.vue` | Token-budget progress bars + top-up form |
+| `dashboard/src/components/LogEvent.vue` | Single structured log event (collapsible) |
+| `dashboard/src/components/LogPanel.vue` | Scrolling log list; streams via SSE for active jobs, fetches history for finished ones |
+| `dashboard/src/components/AgentCard.vue` | Running-agent card with live log preview and cancel button |
+| `dashboard/src/views/ActiveAgentsView.vue` | Polls `/agents` every 5 s and renders `AgentCard` list |
+| `dashboard/src/views/HistoryView.vue` | Paginated, searchable, filterable history table |
+| `dashboard/src/views/HistoryRow.vue` | Single history table row with Logs / Retry actions |
+| `dashboard/src/views/SessionLauncher.vue` | New-session configuration form (project search, branch, goal, gas limits) |
+| `dashboard/src/views/SessionWorkspace.vue` | Split-pane live session: conversation thread (left) + execution trace (right) |
+| `dashboard/src/views/NewSessionView.vue` | Switches between `SessionLauncher` and `SessionWorkspace` |
+
+Build: `cd dashboard && npm install && npm run build` (output → `dashboard/dist/`).
+Dev server: `npm run dev` in `dashboard/` — serves on port 5173 with API proxy to the gateway.
 
 ### Shared models (`shared/models.py`)
 
