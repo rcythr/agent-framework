@@ -13,3 +13,7 @@ tools:
     description: Replace an exact substring in a local file.
   - name: bash
     description: Run a shell command and return its output.
+  - name: spawn_subagent
+    description: Decompose work by spawning an independent sub-agent job via the gateway.
+  - name: rag_query
+    description: Query the project knowledge base (LangIndex RAG) for relevant context.

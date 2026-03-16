@@ -52,11 +52,13 @@ def _parse_push_event(body: dict) -> PushEvent:
     ]
 
     actor = body.get("user_username") or body.get("user_name", "")
+    project_path = body.get("project", {}).get("path_with_namespace", "")
 
     return PushEvent(
         branch=branch,
         commits=commits,
         project_id=body["project_id"],
+        project_path=project_path,
         actor=actor,
     )
 
@@ -75,10 +77,12 @@ def _parse_mr_event(body: dict) -> MREvent:
     )
 
     actor = body.get("user", {}).get("username", "")
+    project_path = body.get("project", {}).get("path_with_namespace", "")
 
     return MREvent(
         mr=mr,
         project_id=body["project"]["id"],
+        project_path=project_path,
         action=action,
         actor=actor,
     )
@@ -88,15 +92,21 @@ def _parse_comment_event(body: dict) -> CommentEvent:
     attrs = body.get("object_attributes", {})
 
     mr_iid = None
+    source_branch = None
     if "merge_request" in body:
-        mr_iid = body["merge_request"].get("iid")
+        mr = body["merge_request"]
+        mr_iid = mr.get("iid")
+        source_branch = mr.get("source_branch")
 
     actor = body.get("user", {}).get("username", "")
+    project_path = body.get("project", {}).get("path_with_namespace", "")
 
     return CommentEvent(
         body=attrs.get("note", ""),
         project_id=body["project_id"],
+        project_path=project_path,
         mr_iid=mr_iid,
+        source_branch=source_branch,
         note_id=attrs.get("id", ""),
         actor=actor,
     )

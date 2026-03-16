@@ -60,11 +60,13 @@ def _parse_push_event(body: dict) -> PushEvent:
     actor = body.get("pusher", {}).get("name", "") or body.get("sender", {}).get("login", "")
     repo = body.get("repository", {})
     project_id = repo.get("full_name", str(repo.get("id", "")))
+    project_path = repo.get("full_name", "")
 
     return PushEvent(
         branch=branch,
         commits=commits,
         project_id=project_id,
+        project_path=project_path,
         actor=actor,
     )
 
@@ -74,6 +76,7 @@ def _parse_pr_event(body: dict) -> MREvent:
     pr = body.get("pull_request", {})
     repo = body.get("repository", {})
     project_id = repo.get("full_name", str(repo.get("id", "")))
+    project_path = repo.get("full_name", "")
 
     mr = MergeRequest(
         iid=pr["number"],
@@ -89,6 +92,7 @@ def _parse_pr_event(body: dict) -> MREvent:
     return MREvent(
         mr=mr,
         project_id=project_id,
+        project_path=project_path,
         action=action,
         actor=actor,
     )
@@ -97,6 +101,7 @@ def _parse_pr_event(body: dict) -> MREvent:
 def _parse_comment_event(body: dict, event_type: str) -> CommentEvent | None:
     repo = body.get("repository", {})
     project_id = repo.get("full_name", str(repo.get("id", "")))
+    project_path = repo.get("full_name", "")
     actor = body.get("sender", {}).get("login", "")
 
     if event_type == "pull_request_review_comment":
@@ -105,6 +110,7 @@ def _parse_comment_event(body: dict, event_type: str) -> CommentEvent | None:
         mr_iid = pr.get("number")
         note_id = comment.get("id", "")
         comment_body = comment.get("body", "")
+        source_branch = pr.get("head", {}).get("ref")
     else:
         # issue_comment — only handle comments on pull requests
         issue = body.get("issue", {})
@@ -114,11 +120,15 @@ def _parse_comment_event(body: dict, event_type: str) -> CommentEvent | None:
         mr_iid = issue.get("number")
         note_id = comment.get("id", "")
         comment_body = comment.get("body", "")
+        # issue_comment doesn't include branch info directly
+        source_branch = None
 
     return CommentEvent(
         body=comment_body,
         project_id=project_id,
+        project_path=project_path,
         mr_iid=mr_iid,
+        source_branch=source_branch,
         note_id=note_id,
         actor=actor,
     )

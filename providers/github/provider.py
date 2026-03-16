@@ -6,6 +6,8 @@ from providers.base import (
     FileContent,
     CommitResult,
     MRResult,
+    IssueResult,
+    Issue,
     MergeRequest,
     Commit,
     PushEvent,
@@ -21,6 +23,7 @@ class GitHubProvider(RepositoryProvider):
 
     def __init__(self, token: str | None):
         self._gh = Github(token)
+        self._token = token or ""
 
     def get_file(self, project_id: int | str, path: str, ref: str) -> FileContent | None:
         try:
@@ -64,6 +67,21 @@ class GitHubProvider(RepositoryProvider):
         )
         return MRResult(iid=pr.number, web_url=pr.html_url)
 
+    def get_mr(self, project_id: int | str, mr_iid: int) -> MergeRequest | None:
+        try:
+            repo = self._gh.get_repo(str(project_id))
+            pr = repo.get_pull(mr_iid)
+            return MergeRequest(
+                iid=pr.number,
+                title=pr.title,
+                description=pr.body or "",
+                source_branch=pr.head.ref,
+                target_branch=pr.base.ref,
+                web_url=pr.html_url,
+            )
+        except GithubException:
+            return None
+
     def post_mr_comment(
         self, project_id: int | str, mr_iid: int, body: str
     ) -> None:
@@ -106,6 +124,52 @@ class GitHubProvider(RepositoryProvider):
             context=context,
         )
 
+    def get_issue(self, project_id: int | str, issue_iid: int) -> Issue | None:
+        try:
+            repo = self._gh.get_repo(str(project_id))
+            issue = repo.get_issue(issue_iid)
+            return Issue(
+                iid=issue.number,
+                title=issue.title,
+                body=issue.body or "",
+                state=issue.state,
+                web_url=issue.html_url,
+                author=issue.user.login if issue.user else "",
+            )
+        except GithubException:
+            return None
+
+    def list_issues(self, project_id: int | str, state: str = "open") -> list[Issue]:
+        repo = self._gh.get_repo(str(project_id))
+        gh_state = state if state in ("open", "closed", "all") else "open"
+        issues = repo.get_issues(state=gh_state)
+        return [
+            Issue(
+                iid=i.number,
+                title=i.title,
+                body=i.body or "",
+                state=i.state,
+                web_url=i.html_url,
+                author=i.user.login if i.user else "",
+            )
+            for i in issues
+            if i.pull_request is None  # exclude PRs (GitHub treats them as issues)
+        ]
+
+    def create_issue(
+        self, project_id: int | str, title: str, body: str
+    ) -> IssueResult:
+        repo = self._gh.get_repo(str(project_id))
+        issue = repo.create_issue(title=title, body=body)
+        return IssueResult(iid=issue.number, web_url=issue.html_url)
+
+    def post_issue_comment(
+        self, project_id: int | str, issue_iid: int, body: str
+    ) -> None:
+        repo = self._gh.get_repo(str(project_id))
+        issue = repo.get_issue(issue_iid)
+        issue.create_comment(body)
+
     def search_projects(self, query: str, user_token: str) -> list[dict]:
         gh = Github(user_token)
         results = gh.search_repositories(query)
@@ -119,13 +183,13 @@ class GitHubProvider(RepositoryProvider):
             for r in list(results)[:20]
         ]
 
-    def list_branches(self, project_id: int | str, user_token: str) -> list[str]:
-        gh = Github(user_token)
+    def list_branches(self, project_id: int | str, user_token: str = "") -> list[str]:
+        gh = Github(user_token) if user_token else self._gh
         repo = gh.get_repo(str(project_id))
         return [b.name for b in repo.get_branches()]
 
-    def list_open_mrs(self, project_id: int | str, user_token: str) -> list[MergeRequest]:
-        gh = Github(user_token)
+    def list_open_mrs(self, project_id: int | str, user_token: str = "") -> list[MergeRequest]:
+        gh = Github(user_token) if user_token else self._gh
         repo = gh.get_repo(str(project_id))
         return [
             MergeRequest(

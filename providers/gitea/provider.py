@@ -7,6 +7,8 @@ from providers.base import (
     FileContent,
     CommitResult,
     MRResult,
+    IssueResult,
+    Issue,
     MergeRequest,
     Commit,
     PushEvent,
@@ -127,6 +129,21 @@ class GiteaProvider(RepositoryProvider):
         ).json()
         return MRResult(iid=data["number"], web_url=data.get("html_url", ""))
 
+    def get_mr(self, project_id: int | str, mr_iid: int) -> MergeRequest | None:
+        owner, repo = self._split(project_id)
+        try:
+            data = self._get(f"/repos/{owner}/{repo}/pulls/{mr_iid}").json()
+            return MergeRequest(
+                iid=data["number"],
+                title=data.get("title", ""),
+                description=data.get("body") or "",
+                source_branch=data.get("head", {}).get("label", ""),
+                target_branch=data.get("base", {}).get("label", ""),
+                web_url=data.get("html_url", ""),
+            )
+        except httpx.HTTPStatusError:
+            return None
+
     def post_mr_comment(
         self, project_id: int | str, mr_iid: int, body: str
     ) -> None:
@@ -174,6 +191,62 @@ class GiteaProvider(RepositoryProvider):
             },
         )
 
+    def get_issue(self, project_id: int | str, issue_iid: int) -> Issue | None:
+        owner, repo = self._split(project_id)
+        try:
+            data = self._get(f"/repos/{owner}/{repo}/issues/{issue_iid}").json()
+            return Issue(
+                iid=data["number"],
+                title=data.get("title", ""),
+                body=data.get("body") or "",
+                state=data.get("state", "open"),
+                web_url=data.get("html_url", ""),
+                author=data.get("user", {}).get("login", ""),
+            )
+        except httpx.HTTPStatusError:
+            return None
+
+    def list_issues(self, project_id: int | str, state: str = "open") -> list[Issue]:
+        owner, repo = self._split(project_id)
+        gitea_state = state if state in ("open", "closed") else "open"
+        try:
+            r = self._get(
+                f"/repos/{owner}/{repo}/issues",
+                params={"type": "issues", "state": gitea_state, "limit": 50},
+            )
+            return [
+                Issue(
+                    iid=i["number"],
+                    title=i.get("title", ""),
+                    body=i.get("body") or "",
+                    state=i.get("state", "open"),
+                    web_url=i.get("html_url", ""),
+                    author=i.get("user", {}).get("login", ""),
+                )
+                for i in r.json()
+            ]
+        except httpx.HTTPStatusError:
+            return []
+
+    def create_issue(
+        self, project_id: int | str, title: str, body: str
+    ) -> IssueResult:
+        owner, repo = self._split(project_id)
+        data = self._post(
+            f"/repos/{owner}/{repo}/issues",
+            json={"title": title, "body": body},
+        ).json()
+        return IssueResult(iid=data["number"], web_url=data.get("html_url", ""))
+
+    def post_issue_comment(
+        self, project_id: int | str, issue_iid: int, body: str
+    ) -> None:
+        owner, repo = self._split(project_id)
+        self._post(
+            f"/repos/{owner}/{repo}/issues/{issue_iid}/comments",
+            json={"body": body},
+        )
+
     def search_projects(self, query: str, user_token: str) -> list[dict]:
         r = httpx.get(
             f"{self._base}/repos/search",
@@ -191,21 +264,23 @@ class GiteaProvider(RepositoryProvider):
             for repo in r.json().get("data", [])
         ]
 
-    def list_branches(self, project_id: int | str, user_token: str) -> list[str]:
+    def list_branches(self, project_id: int | str, user_token: str = "") -> list[str]:
         owner, repo = self._split(project_id)
+        headers = self._user_headers(user_token) if user_token else self._headers
         r = httpx.get(
             f"{self._base}/repos/{owner}/{repo}/branches",
-            headers=self._user_headers(user_token),
+            headers=headers,
             params={"limit": 50},
         )
         r.raise_for_status()
         return [b["name"] for b in r.json()]
 
-    def list_open_mrs(self, project_id: int | str, user_token: str) -> list[MergeRequest]:
+    def list_open_mrs(self, project_id: int | str, user_token: str = "") -> list[MergeRequest]:
         owner, repo = self._split(project_id)
+        headers = self._user_headers(user_token) if user_token else self._headers
         r = httpx.get(
             f"{self._base}/repos/{owner}/{repo}/pulls",
-            headers=self._user_headers(user_token),
+            headers=headers,
             params={"state": "open", "limit": 50},
         )
         r.raise_for_status()
